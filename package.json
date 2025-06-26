@@ -17,11 +17,13 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
+  "type": "module",
   "dependencies": {
     "@fastify/cors": "^11.0.1",
     "@openrouter/ai-sdk-provider": "^0.7.2",
     "@paralleldrive/cuid2": "^2.2.2",
+    "@tailwindcss/postcss": "^4.1.11",
+    "@tailwindcss/vite": "^4.1.11",
     "@tanstack/react-query": "^5.81.2",
     "@trpc/client": "^11.4.2",
     "@trpc/react-query": "^11.4.2",
@@ -50,5 +52,6 @@
     "tsx": "^4.20.3",
     "typescript": "^5.8.3",
     "vite": "^7.0.0"
-  }
+  },
+  "packageManager": "pnpm@10.12.4+sha512.5ea8b0deed94ed68691c9bad4c955492705c5eeb8a87ef86bc62c74a26b037b08ff9570f108b2e4dbd1dd1a9186fea925e527f141c648e85af45631074680184"
 }
