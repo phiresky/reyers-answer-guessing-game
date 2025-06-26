@@ -1,0 +1,1 @@
+ALTER TABLE `players` ADD `is_ready_for_next_round` integer DEFAULT false NOT NULL;

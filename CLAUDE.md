@@ -1,0 +1,1 @@
+The package manager to use is pnpm. The readme contains a good description of the project.

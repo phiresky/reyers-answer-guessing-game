@@ -1,9 +1,15 @@
 import { z } from 'zod'
-import { eq, desc, and, ne } from 'drizzle-orm'
+import { eq, and, ne } from 'drizzle-orm'
 import { publicProcedure, router, eventEmitter } from '../trpc'
 import { db, rooms, players, games, answers, guesses } from '../db'
 import { generateQuestion, rateGuess } from '../services/ai'
 import { on } from 'events'
+
+async function emitGameUpdateWithGuesses(roomId: string, game: any) {
+  // Get guess data for this game
+  const gameGuesses = await db.select().from(guesses).where(eq(guesses.gameId, game.id))
+  eventEmitter.emit('gameUpdate', { roomId, game, guesses: gameGuesses })
+}
 
 async function startAIRating(gameId: string) {
   // Get all guesses for this game
@@ -51,9 +57,9 @@ async function startAIRating(gameId: string) {
     })
     .where(eq(games.id, gameId))
   
-  // Emit game update
+  // Emit game update with guess data
   const updatedGame = await db.select().from(games).where(eq(games.id, gameId)).limit(1)
-  eventEmitter.emit('gameUpdate', { roomId: game.roomId, game: updatedGame[0] })
+  await emitGameUpdateWithGuesses(game.roomId, updatedGame[0])
 }
 
 export const gameRouter = router({
@@ -147,12 +153,16 @@ export const gameRouter = router({
       }
       
       const [currentGame] = await db.select().from(games)
-        .where(eq(games.roomId, input.roomId))
-        .orderBy(desc(games.round))
+        .where(and(eq(games.roomId, input.roomId), eq(games.round, room.currentRound)))
         .limit(1)
       
       if (!currentGame) {
-        const questionStream = await generateQuestion(room.initialPrompt)
+        // Get previous questions from this room to avoid duplicates
+        const previousGames = await db.select({ question: games.question }).from(games)
+          .where(eq(games.roomId, input.roomId))
+        const previousQuestions = previousGames.map(g => g.question)
+        
+        const questionStream = await generateQuestion(room.initialPrompt, previousQuestions)
         let question = ''
         
         for await (const chunk of questionStream) {
@@ -166,7 +176,7 @@ export const gameRouter = router({
           status: 'answering',
         }).returning()
         
-        eventEmitter.emit('gameUpdate', { roomId: input.roomId, game: newGame })
+        await emitGameUpdateWithGuesses(input.roomId, newGame)
         return newGame
       }
       
@@ -313,7 +323,7 @@ export const gameRouter = router({
         await startAIRating(input.gameId)
         
         const updatedGame = await db.select().from(games).where(eq(games.id, input.gameId)).limit(1)
-        eventEmitter.emit('gameUpdate', { roomId: game.roomId, game: updatedGame[0] })
+        await emitGameUpdateWithGuesses(game.roomId, updatedGame[0])
       }
       
       return { success: true }
@@ -378,6 +388,81 @@ export const gameRouter = router({
       })
       
       return { game, results }
+    }),
+
+  readyForNextRound: publicProcedure
+    .input(z.object({
+      gameId: z.string(),
+      playerId: z.string(),
+    }))
+    .mutation(async ({ input }) => {
+      const [game] = await db.select().from(games).where(eq(games.id, input.gameId)).limit(1)
+      
+      if (!game) {
+        throw new Error('Game not found')
+      }
+      
+      if (game.status !== 'completed') {
+        throw new Error('Round not yet completed')
+      }
+      
+      // Check if player is in this room
+      const roomPlayers = await db.select().from(players).where(eq(players.roomId, game.roomId))
+      const player = roomPlayers.find(p => p.id === input.playerId)
+      
+      if (!player) {
+        throw new Error('Player not in room')
+      }
+      
+      // Mark player as ready for next round
+      await db.update(players)
+        .set({ isReadyForNextRound: true })
+        .where(eq(players.id, input.playerId))
+      
+      // Check if all players are ready
+      const readyPlayers = await db.select().from(players).where(
+        and(eq(players.roomId, game.roomId), eq(players.isReadyForNextRound, true))
+      )
+      
+      if (readyPlayers.length >= roomPlayers.length) {
+        // All players ready, start next round
+        const [room] = await db.select().from(rooms).where(eq(rooms.id, game.roomId)).limit(1)
+        
+        if (room && room.currentRound < room.totalRounds) {
+          // Move to next round
+          await db.update(rooms)
+            .set({ currentRound: room.currentRound + 1 })
+            .where(eq(rooms.id, room.id))
+          
+          // Reset all player readiness for next round
+          await db.update(players)
+            .set({ isReadyForNextRound: false })
+            .where(eq(players.roomId, game.roomId))
+          
+          // Emit room update to trigger new game creation
+          const updatedRoom = await db.select().from(rooms).where(eq(rooms.id, room.id)).limit(1)
+          const updatedPlayers = await db.select().from(players).where(eq(players.roomId, game.roomId))
+          eventEmitter.emit('roomUpdate', { roomId: room.id, room: updatedRoom[0], players: updatedPlayers })
+        }
+      }
+      
+      return { success: true }
+    }),
+
+  getRoundReadyStatus: publicProcedure
+    .input(z.object({
+      roomId: z.string(),
+    }))
+    .query(async ({ input }) => {
+      const roomPlayers = await db.select().from(players).where(eq(players.roomId, input.roomId))
+      const readyPlayers = roomPlayers.filter(p => p.isReadyForNextRound)
+      const notReadyPlayers = roomPlayers.filter(p => !p.isReadyForNextRound)
+      
+      return {
+        readyCount: readyPlayers.length,
+        totalCount: roomPlayers.length,
+        notReadyPlayers: notReadyPlayers.map(p => p.name)
+      }
     }),
     
   onGameUpdate: publicProcedure

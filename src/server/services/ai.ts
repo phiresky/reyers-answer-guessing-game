@@ -8,7 +8,8 @@ if (!model)
   );
 
 export async function generateQuestion(
-  prompt: string
+  prompt: string,
+  previousQuestions: string[] = []
 ): Promise<AsyncIterable<string>> {
   const result = await streamText({
     model: ai(model),
@@ -22,12 +23,19 @@ export async function generateQuestion(
         3. Encourage answers that are about 1 sentence long but can be shorter or longer
         4. Be appropriate for all audiences
         5. Make people think about hypothetical scenarios, preferences, or creative ideas
+        6. Be DIFFERENT from any previously asked questions in this game session
         
         Generate exactly ONE question. Do not include any prefixes, suffixes, or explanations - just the question itself.`,
       },
       {
         role: "user",
-        content: `Generate a question based on this theme: "${prompt}"`,
+        content: `Generate a question based on this theme: "${prompt}"${
+          previousQuestions.length > 0
+            ? `\n\nPrevious questions already asked in this game (make sure your new question is different):\n${previousQuestions
+                .map((q, i) => `${i + 1}. ${q}`)
+                .join('\n')}`
+            : ''
+        }`,
       },
     ],
     temperature: 0.9,

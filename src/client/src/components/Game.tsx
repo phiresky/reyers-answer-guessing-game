@@ -34,8 +34,10 @@ const Game: React.FC<GameProps> = ({ roomId, playerId, onBackToLobby }) => {
   const [isAnswerSubmitted, setIsAnswerSubmitted] = useState(false)
   const [isGuessSubmitted, setIsGuessSubmitted] = useState(false)
   const [guessTargetPlayer, setGuessTargetPlayer] = useState<Player | null>(null)
+  const [isReadyForNextRound, setIsReadyForNextRound] = useState(false)
+  const [gameGuesses, setGameGuesses] = useState<any[]>([])
 
-  const { data: gameData } = trpc.game.getCurrentGame.useQuery(
+  const { data: gameData, refetch: refetchCurrentGame } = trpc.game.getCurrentGame.useQuery(
     { roomId },
     { enabled: !!roomId }
   )
@@ -45,13 +47,15 @@ const Game: React.FC<GameProps> = ({ roomId, playerId, onBackToLobby }) => {
     { enabled: !!currentGame && currentGame.status === 'answering' }
   )
 
+
+
   const { data: roomData } = trpc.room.getRoom.useQuery(
     { roomId: roomId, sessionId: getSessionId() },
     { enabled: !!roomId }
   )
 
 
-  const { data: gameResults } = trpc.game.getGameResults.useQuery(
+  const { data: gameResults, refetch: refetchGameResults } = trpc.game.getGameResults.useQuery(
     { gameId: currentGame?.id || '' },
     { 
       enabled: !!currentGame && (currentGame.status === 'rating' || currentGame.status === 'completed'),
@@ -62,13 +66,33 @@ const Game: React.FC<GameProps> = ({ roomId, playerId, onBackToLobby }) => {
   const saveAnswerMutation = trpc.game.saveAnswer.useMutation()
   const saveGuessMutation = trpc.game.saveGuess.useMutation()
   const checkProgressMutation = trpc.game.checkGameProgress.useMutation()
+  const readyForNextRoundMutation = trpc.game.readyForNextRound.useMutation()
+
+  const { data: roundReadyStatus } = trpc.game.getRoundReadyStatus.useQuery(
+    { roomId },
+    { 
+      enabled: !!currentGame && currentGame.status === 'completed' && roomData && currentGame.round < roomData.room.totalRounds,
+      refetchInterval: 2000
+    }
+  )
 
   trpc.game.onGameUpdate.useSubscription(
     { roomId },
     {
       enabled: !!roomId,
       onData: (data) => {
+        console.log('Game update received:', data.game, 'Guesses:', data.guesses)
         setCurrentGame(data.game)
+        
+        // Update guess data if available
+        if (data.guesses) {
+          setGameGuesses(data.guesses)
+        }
+        
+        // If game status changed to rating or completed, refetch results immediately
+        if (data.game.status === 'rating' || data.game.status === 'completed') {
+          refetchGameResults()
+        }
       },
       onError: (error) => {
         console.error('Game subscription error:', error)
@@ -76,11 +100,37 @@ const Game: React.FC<GameProps> = ({ roomId, playerId, onBackToLobby }) => {
     }
   )
 
+  trpc.room.onRoomUpdate.useSubscription(
+    { roomId },
+    {
+      enabled: !!roomId,
+      onData: (data) => {
+        // When room updates (like currentRound increment), refetch current game
+        console.log('Room update received, refetching game')
+        refetchCurrentGame()
+      },
+      onError: (error) => {
+        console.error('Room subscription error:', error)
+      },
+    }
+  )
+
   useEffect(() => {
     if (gameData) {
-      setCurrentGame(gameData)
+      // Only update if it's actually a different game (new game ID or first load)
+      if (!currentGame || currentGame.id !== gameData.id) {
+        console.log('Setting game from gameData:', gameData)
+        setCurrentGame(gameData)
+        // Reset all game state when new game starts
+        setIsReadyForNextRound(false)
+        setCurrentAnswer('')
+        setCurrentGuess('')
+        setIsAnswerSubmitted(false)
+        setIsGuessSubmitted(false)
+        setGuessTargetPlayer(null)
+      }
     }
-  }, [gameData])
+  }, [gameData, currentGame])
 
   useEffect(() => {
     if (gameAnswers) {
@@ -176,6 +226,90 @@ const Game: React.FC<GameProps> = ({ roomId, playerId, onBackToLobby }) => {
     }
   }, [currentGuess, isGuessSubmitted, guessTargetPlayer])
 
+  const handleNextRound = async () => {
+    if (!currentGame) return
+    
+    try {
+      await readyForNextRoundMutation.mutateAsync({
+        gameId: currentGame.id,
+        playerId,
+      })
+      setIsReadyForNextRound(true)
+    } catch (error) {
+      console.error('Failed to mark ready for next round:', error)
+    }
+  }
+
+  const getPlayerStatusColor = (player: any) => {
+    const timeSinceLastSeen = Date.now() - new Date(player.lastSeen).getTime()
+    if (timeSinceLastSeen < 20000) return 'bg-green-500'
+    if (timeSinceLastSeen < 60000) return 'bg-yellow-500'
+    return 'bg-red-500'
+  }
+
+  const getPlayerActivity = (player: any) => {
+    if (!gameAnswers || !currentGame || currentGame.status !== 'answering') return 'waiting'
+    
+    const playerAnswer = gameAnswers.find((answer: Answer) => answer.playerId === player.id)
+    
+    // Phase 1: Thinking (no answer started)
+    if (!playerAnswer) return 'thinking'
+    
+    // Phase 2: Writing answer (answer exists but not submitted)
+    if (!playerAnswer.isSubmitted) return 'writing their answer'
+    
+    // Phase 3: Check if they should be guessing
+    // Player has submitted answer, now check if there are other submitted answers to guess
+    const otherSubmittedAnswers = gameAnswers.filter((answer: Answer) => 
+      answer.playerId !== player.id && answer.isSubmitted
+    )
+    
+    if (otherSubmittedAnswers.length === 0) {
+      // No other answers to guess yet
+      return 'waiting for others'
+    }
+    
+    // Phase 4: Use real guess data to determine status
+    // Check if this player has submitted a guess for the current game
+    const playerGuess = gameGuesses.find((guess: any) => guess.guesserId === player.id)
+    
+    if (!playerGuess) {
+      // Player hasn't started guessing yet - find who they should guess for
+      if (player.id === playerId && guessTargetPlayer) {
+        return `guessing ${guessTargetPlayer.name}'s answer`
+      }
+      
+      // For other players, find a target they might be guessing for
+      const targetPlayer = roomData?.players.find(p => 
+        p.id !== player.id && 
+        gameAnswers.some(a => a.playerId === p.id && a.isSubmitted)
+      )
+      
+      if (targetPlayer) {
+        return `guessing ${targetPlayer.name}'s answer`
+      }
+      
+      return 'waiting for others'
+    }
+    
+    if (!playerGuess.isSubmitted) {
+      // Player is currently writing their guess
+      const targetPlayer = roomData?.players.find(p => p.id === playerGuess.targetPlayerId)
+      return `guessing ${targetPlayer?.name || 'another player'}'s answer`
+    }
+    
+    // Player has submitted their guess
+    return 'waiting for others'
+  }
+
+  const getPlayerPosition = (player: any, sortedPlayers: any[]) => {
+    const position = sortedPlayers.findIndex(p => p.id === player.id) + 1
+    if (position === 1) return '1st'
+    if (position === 2) return '2nd' 
+    if (position === 3) return '3rd'
+    return `${position}th`
+  }
+
   if (!currentGame) {
     return (
       <div className="max-w-4xl mx-auto mt-8 p-6">
@@ -194,13 +328,43 @@ const Game: React.FC<GameProps> = ({ roomId, playerId, onBackToLobby }) => {
       <div className="bg-white rounded-lg shadow-lg p-6">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-3xl font-bold">Round {currentGame.round}</h1>
-          <button
-            onClick={onBackToLobby}
-            className="px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600"
-          >
-            Back to Lobby
-          </button>
         </div>
+
+        {/* Player List */}
+        {roomData && roomData.players && (
+          <div className="mb-6">
+            <h3 className="text-lg font-semibold mb-3">Players</h3>
+            <div className="bg-gray-50 rounded-lg p-4">
+              <div className="space-y-2">
+                {roomData.players
+                  .sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0))
+                  .map((player) => (
+                    <div key={player.id} className="flex items-center justify-between p-2 bg-white rounded border">
+                      <div className="flex items-center space-x-3">
+                        <div className="flex items-center space-x-2">
+                          <span className="font-medium text-sm text-gray-600">
+                            {getPlayerPosition(player, roomData.players.sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0)))}
+                          </span>
+                          <div className={`w-3 h-3 rounded-full ${getPlayerStatusColor(player)}`}></div>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <span className="font-medium">{player.name}</span>
+                          {player.isCreator && <span className="text-yellow-500">👑</span>}
+                          {player.country && <span>{player.country}</span>}
+                        </div>
+                        <span className="text-sm font-medium text-blue-600">
+                          {player.totalScore || 0} pts
+                        </span>
+                      </div>
+                      <div className="text-sm text-gray-500 italic">
+                        {getPlayerActivity(player)}
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="mb-8">
           <h2 className="text-2xl font-semibold mb-4 text-center">
@@ -310,11 +474,18 @@ const Game: React.FC<GameProps> = ({ roomId, playerId, onBackToLobby }) => {
           </div>
         )}
 
-        {currentGame.status === 'rating' && gameResults && (
+        {currentGame.status === 'rating' && (
           <div className="bg-yellow-50 p-6 rounded-lg">
             <h3 className="text-xl font-semibold mb-6">Round {currentGame.round} Results</h3>
             <p className="text-gray-600 mb-6">AI is rating the guesses...</p>
             
+            {!gameResults ? (
+              <div className="text-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+                <p className="text-gray-600">Loading results...</p>
+              </div>
+            ) : (
+            
             <div className="space-y-6">
               {gameResults.results.map((result: any, index: number) => (
                 <div key={index} className="bg-white p-4 rounded-lg border">
@@ -363,12 +534,20 @@ const Game: React.FC<GameProps> = ({ roomId, playerId, onBackToLobby }) => {
                 </div>
               ))}
             </div>
+            )}
           </div>
         )}
 
-        {currentGame.status === 'completed' && gameResults && (
+        {currentGame.status === 'completed' && (
           <div className="bg-purple-50 p-6 rounded-lg">
             <h3 className="text-xl font-semibold mb-6">Round {currentGame.round} Results</h3>
+            
+            {!gameResults ? (
+              <div className="text-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+                <p className="text-gray-600">Loading results...</p>
+              </div>
+            ) : (
             
             <div className="space-y-6">
               {gameResults.results.map((result: any, index: number) => (
@@ -418,14 +597,48 @@ const Game: React.FC<GameProps> = ({ roomId, playerId, onBackToLobby }) => {
                 </div>
               ))}
             </div>
+            )}
             
             <div className="mt-8 text-center">
-              <button
-                onClick={onBackToLobby}
-                className="px-6 py-3 bg-blue-500 text-white rounded-md hover:bg-blue-600"
-              >
-                Back to Lobby
-              </button>
+              {roomData && currentGame.round >= roomData.room.totalRounds ? (
+                // Final round completed - show Back to Lobby
+                <button
+                  onClick={onBackToLobby}
+                  className="px-6 py-3 bg-blue-500 text-white rounded-md hover:bg-blue-600"
+                >
+                  Back to Lobby
+                </button>
+              ) : (
+                // Not final round - show Next button
+                <div className="space-y-4">
+                  {!isReadyForNextRound ? (
+                    <button
+                      onClick={handleNextRound}
+                      disabled={readyForNextRoundMutation.isPending}
+                      className="px-6 py-3 bg-green-500 text-white rounded-md hover:bg-green-600 disabled:bg-gray-300"
+                    >
+                      {readyForNextRoundMutation.isPending ? 'Loading...' : 'Next Round'}
+                    </button>
+                  ) : (
+                    <div className="px-6 py-3 bg-gray-100 text-gray-600 rounded-md border">
+                      ✓ Ready for Next Round
+                    </div>
+                  )}
+                  {roundReadyStatus && (
+                    <div className="text-sm text-gray-600">
+                      {roundReadyStatus.notReadyPlayers.length > 0 ? (
+                        roundReadyStatus.notReadyPlayers.length <= 2 ? (
+                          <>Waiting for {roundReadyStatus.notReadyPlayers.join(', ')}</>
+                        ) : (
+                          <>Waiting for {roundReadyStatus.notReadyPlayers.length} players</>
+                        )
+                      ) : (
+                        <>All players ready! Starting next round...</>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}

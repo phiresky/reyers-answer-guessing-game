@@ -23,6 +23,7 @@ export const players = sqliteTable('players', {
   isCreator: integer('is_creator', { mode: 'boolean' }).notNull().default(false),
   lastSeen: integer('last_seen', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
   status: text('status', { enum: ['online', 'away', 'offline'] }).notNull().default('online'),
+  isReadyForNextRound: integer('is_ready_for_next_round', { mode: 'boolean' }).notNull().default(false),
   totalScore: real('total_score').notNull().default(0),
   joinedAt: integer('joined_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
 })

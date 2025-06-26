@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { trpc } from '../trpc'
 
 interface GameConfigProps {
@@ -31,6 +31,13 @@ const GameConfig: React.FC<GameConfigProps> = ({
   const updateConfigMutation = trpc.game.updateConfig.useMutation()
   const startGameMutation = trpc.game.startGame.useMutation()
 
+  // Sync local state with props when currentConfig changes
+  useEffect(() => {
+    setTotalRounds(currentConfig.totalRounds)
+    setRoundTimeLimit(currentConfig.roundTimeLimit)
+    setInitialPrompt(currentConfig.initialPrompt)
+  }, [currentConfig.totalRounds, currentConfig.roundTimeLimit, currentConfig.initialPrompt])
+
   const handleUpdateConfig = async () => {
     try {
       await updateConfigMutation.mutateAsync({
@@ -58,14 +65,60 @@ const GameConfig: React.FC<GameConfigProps> = ({
     }
   }
 
-  const hasChanges = 
-    totalRounds !== currentConfig.totalRounds ||
-    roundTimeLimit !== currentConfig.roundTimeLimit ||
-    initialPrompt.trim() !== currentConfig.initialPrompt
+  // Auto-save function
+  const autoSave = async () => {
+    if (!isCreator) return
+    
+    try {
+      await updateConfigMutation.mutateAsync({
+        roomId,
+        playerId,
+        totalRounds,
+        roundTimeLimit,
+        initialPrompt: initialPrompt.trim(),
+      })
+      onConfigUpdate()
+    } catch (error) {
+      console.error('Failed to auto-save config:', error)
+    }
+  }
+
+  // Auto-save when totalRounds changes (immediate)
+  useEffect(() => {
+    if (isCreator && totalRounds !== currentConfig.totalRounds) {
+      autoSave()
+    }
+  }, [totalRounds])
+
+  // Auto-save when roundTimeLimit changes (immediate)
+  useEffect(() => {
+    if (isCreator && roundTimeLimit !== currentConfig.roundTimeLimit) {
+      autoSave()
+    }
+  }, [roundTimeLimit])
+
+  // Auto-save when initialPrompt changes (debounced)
+  useEffect(() => {
+    if (isCreator && initialPrompt.trim() !== currentConfig.initialPrompt && initialPrompt.trim().length > 0) {
+      const timer = setTimeout(() => {
+        autoSave()
+      }, 1000) // 1 second debounce for text input
+      
+      return () => clearTimeout(timer)
+    }
+  }, [initialPrompt])
 
   return (
     <div className="bg-blue-50 p-6 rounded-lg">
-      <h3 className="text-xl font-semibold mb-4">Game Configuration</h3>
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-xl font-semibold">Game Configuration</h3>
+        {isCreator && updateConfigMutation.isPending && (
+          <div className="flex items-center space-x-2 text-sm text-gray-600">
+            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
+            <span>Saving...</span>
+          </div>
+        )}
+      </div>
       
       <div className="space-y-4">
         <div>
@@ -125,25 +178,13 @@ const GameConfig: React.FC<GameConfigProps> = ({
 
         <div className="flex space-x-3">
           {isCreator ? (
-            <>
-              {hasChanges && (
-                <button
-                  onClick={handleUpdateConfig}
-                  disabled={updateConfigMutation.isPending}
-                  className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:bg-gray-300"
-                >
-                  {updateConfigMutation.isPending ? 'Saving...' : 'Save Configuration'}
-                </button>
-              )}
-              
-              <button
-                onClick={handleStartGame}
-                disabled={startGameMutation.isPending}
-                className="px-6 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 disabled:bg-gray-300"
-              >
-                {startGameMutation.isPending ? 'Starting...' : 'Start Game'}
-              </button>
-            </>
+            <button
+              onClick={handleStartGame}
+              disabled={startGameMutation.isPending}
+              className="px-6 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 disabled:bg-gray-300"
+            >
+              {startGameMutation.isPending ? 'Starting...' : 'Start Game'}
+            </button>
           ) : (
             <div className="flex items-center space-x-2 text-gray-600">
               <span>Waiting for</span>
