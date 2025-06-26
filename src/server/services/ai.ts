@@ -1,13 +1,12 @@
-import { openrouter } from '@openrouter/ai-sdk-provider'
 import { streamText, generateText } from 'ai'
+import { anthropic as ai } from '@ai-sdk/anthropic';
 
-const ai = openrouter({
-  apiKey: process.env.OPENROUTER_API_KEY || '',
-})
 
+const model = process.env.ANTHROPIC_MODEL;
+if(!model) throw new Error('ANOTHER_MODEL environment variable is not set. Please set it to the desired model name.');
 export async function generateQuestion(prompt: string): Promise<AsyncIterable<string>> {
   const result = await streamText({
-    model: ai('openai/gpt-3.5-turbo'),
+    model: ai(model),
     messages: [
       {
         role: 'system',

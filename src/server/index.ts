@@ -6,6 +6,7 @@ import type { Context } from './trpc'
 
 const server = fastify({
   maxParamLength: 5000,
+  logger: true
 })
 
 server.register(cors, {
@@ -24,10 +25,11 @@ server.register(fastifyTRPCPlugin, {
   },
 })
 
+const port = 4000;
 const start = async () => {
   try {
-    await server.listen({ port: 4000 })
-    console.log('Server is running on http://localhost:4000')
+    await server.listen({ port })
+    console.log(`Server is running on http://localhost:${port}`)
   } catch (err) {
     server.log.error(err)
     process.exit(1)

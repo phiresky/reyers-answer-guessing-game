@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { trpc } from '../trpc'
 import { getSessionId, getPlayerName, setPlayerName, getRoomId, setRoomId, clearRoomId } from '../utils/storage'
+import { getRoomCodeFromUrl, setRoomCodeInUrl, clearRoomCodeFromUrl } from '../utils/url'
 import GameConfig from './GameConfig'
 import Game from './Game'
 
@@ -35,9 +36,20 @@ const Lobby: React.FC = () => {
   const createRoomMutation = trpc.room.create.useMutation()
   const joinRoomMutation = trpc.room.join.useMutation()
   const updatePlayerStatusMutation = trpc.room.updatePlayerStatus.useMutation()
-  const { data: roomData, refetch: refetchRoom } = trpc.room.getRoom.useQuery(
-    { roomId: currentRoom?.id || '' },
-    { enabled: !!currentRoom }
+  const markPlayerOfflineMutation = trpc.room.markPlayerOffline.useMutation()
+  const leaveRoomMutation = trpc.room.leave.useMutation()
+  const { data: roomData, refetch: refetchRoom, error: roomError } = trpc.room.getRoom.useQuery(
+    { roomId: currentRoom?.id || '', sessionId: getSessionId() },
+    { 
+      enabled: !!currentRoom,
+      retry: false, // Don't retry if room doesn't exist
+    }
+  )
+  
+  const urlRoomCode = getRoomCodeFromUrl()
+  const { data: roomByCodeData } = trpc.room.getRoomByCode.useQuery(
+    { roomCode: urlRoomCode || '', sessionId: getSessionId() },
+    { enabled: !!urlRoomCode && !currentRoom }
   )
   
   trpc.room.onRoomUpdate.useSubscription(
@@ -60,11 +72,18 @@ const Lobby: React.FC = () => {
       },
     }
   )
-  console.log("room info", currentRoom, roomData);
+  console.log("room info", currentRoom, roomData, roomError);
 
   useEffect(() => {
+    const urlRoomCode = getRoomCodeFromUrl()
     const savedRoomId = getRoomId()
-    if (savedRoomId) {
+    
+    if (urlRoomCode) {
+      // Priority: URL room code - will be handled by roomByCodeData query
+      setMode('room')
+    } else if (savedRoomId) {
+      // Fallback: saved room ID - set currentRoom to trigger roomData query
+      setCurrentRoom({ id: savedRoomId } as Room)
       setMode('room')
     }
   }, [])
@@ -76,8 +95,48 @@ const Lobby: React.FC = () => {
         ...p,
         lastSeen: new Date(p.lastSeen)
       })))
+      
+      // Update URL with room code if not already there
+      const urlRoomCode = getRoomCodeFromUrl()
+      if (!urlRoomCode) {
+        setRoomCodeInUrl(roomData.room.code)
+      }
+      
+      // Set current player ID if available
+      if ((roomData as any).currentPlayerId && !currentPlayerId) {
+        setCurrentPlayerId((roomData as any).currentPlayerId)
+      }
     }
   }, [roomData])
+  
+  useEffect(() => {
+    if (roomByCodeData) {
+      setCurrentRoom(roomByCodeData.room)
+      setPlayers(roomByCodeData.players.map((p: any) => ({
+        ...p,
+        lastSeen: new Date(p.lastSeen)
+      })))
+      setRoomId(roomByCodeData.room.id)
+      
+      if (roomByCodeData.currentPlayerId) {
+        setCurrentPlayerId(roomByCodeData.currentPlayerId)
+      }
+    }
+  }, [roomByCodeData])
+
+  // Handle room errors (room deleted, etc.)
+  useEffect(() => {
+    if (roomError) {
+      console.error('Room error:', roomError)
+      // Clear saved data and go back to menu
+      clearRoomId()
+      clearRoomCodeFromUrl()
+      setCurrentRoom(null)
+      setCurrentPlayerId(null)
+      setPlayers([])
+      setMode('menu')
+    }
+  }, [roomError])
 
   useEffect(() => {
     if (!currentPlayerId) return
@@ -86,7 +145,22 @@ const Lobby: React.FC = () => {
       updatePlayerStatusMutation.mutate({ playerId: currentPlayerId })
     }, 5000)
 
-    return () => clearInterval(interval)
+    // Mark player as offline when they close the browser (but keep them in room)
+    const handleBeforeUnload = () => {
+      if (currentPlayerId) {
+        // Use sendBeacon for reliability during page unload
+        navigator.sendBeacon('/trpc/room.markPlayerOffline', JSON.stringify({
+          json: { playerId: currentPlayerId }
+        }))
+      }
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+
+    return () => {
+      clearInterval(interval)
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+    }
   }, [currentPlayerId])
 
   const handleCreateRoom = async () => {
@@ -102,6 +176,7 @@ const Lobby: React.FC = () => {
       setCurrentRoom(result.room)
       setCurrentPlayerId(result.playerId)
       setRoomId(result.room.id)
+      setRoomCodeInUrl(result.room.code)
       setMode('room')
     } catch (error) {
       console.error('Failed to create room:', error)
@@ -122,18 +197,45 @@ const Lobby: React.FC = () => {
       setCurrentRoom(result.room)
       setCurrentPlayerId(result.playerId)
       setRoomId(result.room.id)
+      setRoomCodeInUrl(result.room.code)
       setMode('room')
     } catch (error) {
       console.error('Failed to join room:', error)
     }
   }
 
-  const handleLeaveRoom = () => {
-    clearRoomId()
-    setCurrentRoom(null)
-    setCurrentPlayerId(null)
-    setPlayers([])
-    setMode('menu')
+  const handleLeaveRoom = async () => {
+    if (!currentPlayerId) {
+      // If no player ID, just clear local state
+      clearRoomId()
+      clearRoomCodeFromUrl()
+      setCurrentRoom(null)
+      setCurrentPlayerId(null)
+      setPlayers([])
+      setMode('menu')
+      return
+    }
+
+    try {
+      await leaveRoomMutation.mutateAsync({ playerId: currentPlayerId })
+      
+      // Clear local state after successful leave
+      clearRoomId()
+      clearRoomCodeFromUrl()
+      setCurrentRoom(null)
+      setCurrentPlayerId(null)
+      setPlayers([])
+      setMode('menu')
+    } catch (error) {
+      console.error('Failed to leave room:', error)
+      // Still clear local state even if server call fails
+      clearRoomId()
+      clearRoomCodeFromUrl()
+      setCurrentRoom(null)
+      setCurrentPlayerId(null)
+      setPlayers([])
+      setMode('menu')
+    }
   }
 
   const getPlayerStatusColor = (player: Player) => {

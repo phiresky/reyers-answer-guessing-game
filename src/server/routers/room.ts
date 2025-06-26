@@ -109,6 +109,7 @@ export const roomRouter = router({
   getRoom: publicProcedure
     .input(z.object({
       roomId: z.string(),
+      sessionId: z.string().optional(),
     }))
     .query(async ({ input }) => {
       const [room] = await db.select().from(rooms).where(eq(rooms.id, input.roomId)).limit(1)
@@ -119,7 +120,60 @@ export const roomRouter = router({
       
       const roomPlayers = await db.select().from(players).where(eq(players.roomId, room.id))
       
-      return { room, players: roomPlayers }
+      let currentPlayerId = null
+      if (input.sessionId) {
+        const existingPlayer = await db.select().from(players).where(
+          and(eq(players.roomId, room.id), eq(players.sessionId, input.sessionId))
+        ).limit(1)
+        
+        if (existingPlayer.length > 0) {
+          currentPlayerId = existingPlayer[0].id
+          // Update their status to online
+          await db.update(players)
+            .set({ 
+              lastSeen: new Date(),
+              status: 'online' 
+            })
+            .where(eq(players.id, existingPlayer[0].id))
+        }
+      }
+      
+      return { room, players: roomPlayers, currentPlayerId }
+    }),
+    
+  getRoomByCode: publicProcedure
+    .input(z.object({
+      roomCode: z.string(),
+      sessionId: z.string().optional(),
+    }))
+    .query(async ({ input }) => {
+      const [room] = await db.select().from(rooms).where(eq(rooms.code, input.roomCode.toUpperCase())).limit(1)
+      
+      if (!room) {
+        throw new Error('Room not found')
+      }
+      
+      const roomPlayers = await db.select().from(players).where(eq(players.roomId, room.id))
+      
+      let currentPlayerId = null
+      if (input.sessionId) {
+        const existingPlayer = await db.select().from(players).where(
+          and(eq(players.roomId, room.id), eq(players.sessionId, input.sessionId))
+        ).limit(1)
+        
+        if (existingPlayer.length > 0) {
+          currentPlayerId = existingPlayer[0].id
+          // Update their status to online
+          await db.update(players)
+            .set({ 
+              lastSeen: new Date(),
+              status: 'online' 
+            })
+            .where(eq(players.id, existingPlayer[0].id))
+        }
+      }
+      
+      return { room, players: roomPlayers, currentPlayerId }
     }),
     
   updatePlayerStatus: publicProcedure
@@ -144,11 +198,12 @@ export const roomRouter = router({
       return { success: true }
     }),
     
-  leave: publicProcedure
+  markPlayerOffline: publicProcedure
     .input(z.object({
       playerId: z.string(),
     }))
     .mutation(async ({ input }) => {
+      // Just mark as offline, don't remove from room
       await db.update(players)
         .set({ status: 'offline' })
         .where(eq(players.id, input.playerId))
@@ -158,6 +213,49 @@ export const roomRouter = router({
         const [room] = await db.select().from(rooms).where(eq(rooms.id, player.roomId)).limit(1)
         const roomPlayers = await db.select().from(players).where(eq(players.roomId, player.roomId))
         eventEmitter.emit('roomUpdate', { roomId: player.roomId, room, players: roomPlayers })
+      }
+      
+      return { success: true }
+    }),
+    
+  leave: publicProcedure
+    .input(z.object({
+      playerId: z.string(),
+    }))
+    .mutation(async ({ input }) => {
+      const [player] = await db.select().from(players).where(eq(players.id, input.playerId)).limit(1)
+      
+      if (!player) {
+        throw new Error('Player not found')
+      }
+      
+      // Remove the player from the room completely
+      await db.delete(players).where(eq(players.id, input.playerId))
+      
+      // Get updated room state and emit update
+      const [room] = await db.select().from(rooms).where(eq(rooms.id, player.roomId)).limit(1)
+      if (room) {
+        const remainingPlayers = await db.select().from(players).where(eq(players.roomId, player.roomId))
+        
+        // If no players left, delete the room
+        if (remainingPlayers.length === 0) {
+          await db.delete(rooms).where(eq(rooms.id, player.roomId))
+        } else {
+          // If the leaving player was the creator, assign a new creator
+          if (player.isCreator && remainingPlayers.length > 0) {
+            await db.update(players)
+              .set({ isCreator: true })
+              .where(eq(players.id, remainingPlayers[0].id))
+              
+            await db.update(rooms)
+              .set({ creatorId: remainingPlayers[0].id })
+              .where(eq(rooms.id, player.roomId))
+          }
+          
+          // Emit room update with remaining players
+          const updatedPlayers = await db.select().from(players).where(eq(players.roomId, player.roomId))
+          eventEmitter.emit('roomUpdate', { roomId: player.roomId, room, players: updatedPlayers })
+        }
       }
       
       return { success: true }
