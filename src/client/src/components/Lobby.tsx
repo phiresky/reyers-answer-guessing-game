@@ -25,7 +25,7 @@ interface Room {
 }
 
 const Lobby: React.FC = () => {
-  const [mode, setMode] = useState<'menu' | 'create' | 'join' | 'room' | 'game'>('menu')
+  const [mode, setMode] = useState<'menu' | 'create' | 'join' | 'join-via-url' | 'room' | 'game'>('menu')
   console.log('Lobby mode:', mode)
   const [playerName, setPlayerNameState] = useState(getPlayerName())
   const [roomCode, setRoomCode] = useState('')
@@ -79,8 +79,9 @@ const Lobby: React.FC = () => {
     const savedRoomId = getRoomId()
     
     if (urlRoomCode) {
-      // Priority: URL room code - will be handled by roomByCodeData query
-      setMode('room')
+      // Priority: URL room code - show join interface first
+      setRoomCode(urlRoomCode)
+      setMode('join-via-url')
     } else if (savedRoomId) {
       // Fallback: saved room ID - set currentRoom to trigger roomData query
       setCurrentRoom({ id: savedRoomId } as Room)
@@ -116,10 +117,12 @@ const Lobby: React.FC = () => {
         ...p,
         lastSeen: new Date(p.lastSeen)
       })))
-      setRoomId(roomByCodeData.room.id)
       
+      // Only transition to room mode if we have a current player ID (means we joined)
       if (roomByCodeData.currentPlayerId) {
         setCurrentPlayerId(roomByCodeData.currentPlayerId)
+        setRoomId(roomByCodeData.room.id)
+        setMode('room')
       }
     }
   }, [roomByCodeData])
@@ -198,6 +201,26 @@ const Lobby: React.FC = () => {
       setCurrentPlayerId(result.playerId)
       setRoomId(result.room.id)
       setRoomCodeInUrl(result.room.code)
+      setMode('room')
+    } catch (error) {
+      console.error('Failed to join room:', error)
+    }
+  }
+
+  const handleJoinRoomViaUrl = async () => {
+    if (!playerName.trim() || !roomCode.trim()) return
+    
+    try {
+      const result = await joinRoomMutation.mutateAsync({
+        roomCode: roomCode.trim().toUpperCase(),
+        playerName: playerName.trim(),
+        sessionId: getSessionId(),
+      })
+      
+      setPlayerName(playerName.trim())
+      setCurrentRoom(result.room)
+      setCurrentPlayerId(result.playerId)
+      setRoomId(result.room.id)
       setMode('room')
     } catch (error) {
       console.error('Failed to join room:', error)
@@ -364,6 +387,76 @@ const Lobby: React.FC = () => {
     )
   }
 
+  if (mode === 'join-via-url' && currentRoom) {
+    return (
+      <div className="max-w-4xl mx-auto mt-8 p-6">
+        <div className="bg-white rounded-lg shadow-lg p-6">
+          <div className="text-center mb-8">
+            <h1 className="text-3xl font-bold mb-2">Join Room {currentRoom.code}</h1>
+            <p className="text-gray-600">Enter your name to join this room</p>
+          </div>
+
+          <div className="max-w-md mx-auto mb-8">
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Your Name
+              </label>
+              <input
+                type="text"
+                value={playerName}
+                onChange={(e) => setPlayerNameState(e.target.value)}
+                placeholder="Enter your name"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                maxLength={50}
+              />
+            </div>
+
+            <div className="space-y-4">
+              <button
+                onClick={handleJoinRoomViaUrl}
+                disabled={joinRoomMutation.isPending || !playerName.trim()}
+                className="w-full py-3 px-4 bg-green-500 text-white rounded-md hover:bg-green-600 disabled:bg-gray-300"
+              >
+                {joinRoomMutation.isPending ? 'Joining...' : 'Join Room'}
+              </button>
+              
+              <button
+                onClick={() => {
+                  clearRoomCodeFromUrl()
+                  setMode('menu')
+                }}
+                className="w-full py-3 px-4 bg-gray-500 text-white rounded-md hover:bg-gray-600"
+              >
+                Back to Menu
+              </button>
+            </div>
+          </div>
+
+          <div className="border-t pt-6">
+            <h2 className="text-xl font-semibold mb-4">Players Already in Room ({players.length})</h2>
+            <div className="space-y-3">
+              {players.map((player) => (
+                <div key={player.id} className="flex items-center space-x-3 p-3 bg-gray-50 rounded-md">
+                  <div className={`w-3 h-3 rounded-full ${getPlayerStatusColor(player)}`}></div>
+                  <div className="flex-1">
+                    <div className="flex items-center space-x-2">
+                      <span className="font-medium">{player.name}</span>
+                      {player.isCreator && <span className="text-yellow-500">👑</span>}
+                      {player.country && <span>{player.country}</span>}
+                    </div>
+                    {getTimeSinceLastSeen(player) && (
+                      <span className="text-sm text-gray-500">{getTimeSinceLastSeen(player)}</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   if (mode === 'room' && currentRoom) {
     return (
       <div className="max-w-4xl mx-auto mt-8 p-6">
@@ -402,7 +495,7 @@ const Lobby: React.FC = () => {
             </div>
           </div>
 
-          {currentPlayerId === currentRoom.creatorId && currentRoom.status === 'lobby' && (
+          {currentRoom.status === 'lobby' && (
             <GameConfig
               roomId={currentRoom.id}
               playerId={currentPlayerId}
@@ -413,6 +506,8 @@ const Lobby: React.FC = () => {
               }}
               onConfigUpdate={() => refetchRoom()}
               onStartGame={() => refetchRoom()}
+              isCreator={currentPlayerId === currentRoom.creatorId}
+              creatorName={players.find(p => p.isCreator)?.name}
             />
           )}
         </div>

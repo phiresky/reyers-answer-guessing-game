@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { trpc } from '../trpc'
+import { getSessionId } from '../utils/storage'
 
 interface GameProps {
   roomId: string
@@ -44,6 +45,12 @@ const Game: React.FC<GameProps> = ({ roomId, playerId, onBackToLobby }) => {
     { enabled: !!currentGame && currentGame.status === 'answering' }
   )
 
+  const { data: roomData } = trpc.room.getRoom.useQuery(
+    { roomId: roomId, sessionId: getSessionId() },
+    { enabled: !!roomId }
+  )
+
+
   const { data: gameResults } = trpc.game.getGameResults.useQuery(
     { gameId: currentGame?.id || '' },
     { 
@@ -83,20 +90,27 @@ const Game: React.FC<GameProps> = ({ roomId, playerId, onBackToLobby }) => {
         setCurrentAnswer(myAnswer.answer)
         setIsAnswerSubmitted(myAnswer.isSubmitted)
       }
+    }
+  }, [gameAnswers, playerId])
+
+  // Assign a random guess target when player submits their answer
+  useEffect(() => {
+    if (isAnswerSubmitted && roomData && !guessTargetPlayer) {
+      // Get other players (not self)
+      const otherPlayers = roomData.players.filter(p => p.id !== playerId)
       
-      // Find a player to guess for (not self, and one who has submitted an answer)
-      const otherPlayersWithAnswers = gameAnswers.filter(
-        (answer: Answer) => answer.playerId !== playerId && answer.isSubmitted
-      )
-      
-      if (otherPlayersWithAnswers.length > 0 && !guessTargetPlayer) {
-        // For now, just pick the first one. In a real game, you might want better assignment logic
-        const targetAnswer = otherPlayersWithAnswers[0]
-        // We need to get the player info somehow - for now we'll use a placeholder
-        setGuessTargetPlayer({ id: targetAnswer.playerId, name: 'Other Player' })
+      if (otherPlayers.length > 0) {
+        // Pick a random player to guess for
+        const randomIndex = Math.floor(Math.random() * otherPlayers.length)
+        const targetPlayer = otherPlayers[randomIndex]
+        
+        setGuessTargetPlayer({ 
+          id: targetPlayer.id, 
+          name: targetPlayer.name 
+        })
       }
     }
-  }, [gameAnswers, playerId, guessTargetPlayer])
+  }, [isAnswerSubmitted, roomData, guessTargetPlayer, playerId])
 
   const handleSaveAnswer = async (submit = false) => {
     if (!currentGame || !currentAnswer.trim()) return

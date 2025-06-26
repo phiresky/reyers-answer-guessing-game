@@ -11,6 +11,8 @@ interface GameConfigProps {
   }
   onConfigUpdate: () => void
   onStartGame: () => void
+  isCreator?: boolean
+  creatorName?: string
 }
 
 const GameConfig: React.FC<GameConfigProps> = ({
@@ -19,6 +21,8 @@ const GameConfig: React.FC<GameConfigProps> = ({
   currentConfig,
   onConfigUpdate,
   onStartGame,
+  isCreator = true,
+  creatorName,
 }) => {
   const [totalRounds, setTotalRounds] = useState(currentConfig.totalRounds)
   const [roundTimeLimit, setRoundTimeLimit] = useState(currentConfig.roundTimeLimit)
@@ -71,7 +75,8 @@ const GameConfig: React.FC<GameConfigProps> = ({
           <select
             value={totalRounds}
             onChange={(e) => setTotalRounds(Number(e.target.value))}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            disabled={!isCreator}
+            className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${!isCreator ? 'bg-gray-100 cursor-not-allowed' : ''}`}
           >
             {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(num => (
               <option key={num} value={num}>{num}</option>
@@ -86,7 +91,8 @@ const GameConfig: React.FC<GameConfigProps> = ({
           <select
             value={roundTimeLimit}
             onChange={(e) => setRoundTimeLimit(Number(e.target.value))}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            disabled={!isCreator}
+            className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${!isCreator ? 'bg-gray-100 cursor-not-allowed' : ''}`}
           >
             <option value={30}>30 seconds</option>
             <option value={60}>1 minute</option>
@@ -107,7 +113,8 @@ const GameConfig: React.FC<GameConfigProps> = ({
             value={initialPrompt}
             onChange={(e) => setInitialPrompt(e.target.value)}
             placeholder="Enter the theme for AI question generation"
-            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            disabled={!isCreator}
+            className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${!isCreator ? 'bg-gray-100 cursor-not-allowed' : ''}`}
             rows={3}
             maxLength={200}
           />
@@ -117,23 +124,34 @@ const GameConfig: React.FC<GameConfigProps> = ({
         </div>
 
         <div className="flex space-x-3">
-          {hasChanges && (
-            <button
-              onClick={handleUpdateConfig}
-              disabled={updateConfigMutation.isPending}
-              className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:bg-gray-300"
-            >
-              {updateConfigMutation.isPending ? 'Saving...' : 'Save Configuration'}
-            </button>
+          {isCreator ? (
+            <>
+              {hasChanges && (
+                <button
+                  onClick={handleUpdateConfig}
+                  disabled={updateConfigMutation.isPending}
+                  className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:bg-gray-300"
+                >
+                  {updateConfigMutation.isPending ? 'Saving...' : 'Save Configuration'}
+                </button>
+              )}
+              
+              <button
+                onClick={handleStartGame}
+                disabled={startGameMutation.isPending}
+                className="px-6 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 disabled:bg-gray-300"
+              >
+                {startGameMutation.isPending ? 'Starting...' : 'Start Game'}
+              </button>
+            </>
+          ) : (
+            <div className="flex items-center space-x-2 text-gray-600">
+              <span>Waiting for</span>
+              <span className="text-yellow-500">👑</span>
+              <span className="font-medium">{creatorName}</span>
+              <span>to start the game</span>
+            </div>
           )}
-          
-          <button
-            onClick={handleStartGame}
-            disabled={startGameMutation.isPending}
-            className="px-6 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 disabled:bg-gray-300"
-          >
-            {startGameMutation.isPending ? 'Starting...' : 'Start Game'}
-          </button>
         </div>
       </div>
     </div>
