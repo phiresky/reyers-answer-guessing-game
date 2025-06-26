@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { httpBatchLink, splitLink, unstable_httpSubscriptionLink } from '@trpc/client'
+import { httpBatchLink, splitLink, httpSubscriptionLink } from '@trpc/client'
 import { trpc } from './trpc'
 import { getSessionId } from './utils/storage'
 import Lobby from './components/Lobby'
@@ -13,13 +13,8 @@ const trpcClient = trpc.createClient({
       condition(op) {
         return op.type === 'subscription'
       },
-      true: unstable_httpSubscriptionLink({
+      true: httpSubscriptionLink({
         url: 'http://localhost:4000/trpc',
-        headers() {
-          return {
-            'x-session-id': getSessionId(),
-          }
-        },
       }),
       false: httpBatchLink({
         url: 'http://localhost:4000/trpc',

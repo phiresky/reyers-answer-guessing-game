@@ -7,7 +7,7 @@ import Game from './Game'
 interface Player {
   id: string
   name: string
-  country?: string
+  country: string | null
   isCreator: boolean
   status: 'online' | 'away' | 'offline'
   lastSeen: Date
@@ -25,6 +25,7 @@ interface Room {
 
 const Lobby: React.FC = () => {
   const [mode, setMode] = useState<'menu' | 'create' | 'join' | 'room' | 'game'>('menu')
+  console.log('Lobby mode:', mode)
   const [playerName, setPlayerNameState] = useState(getPlayerName())
   const [roomCode, setRoomCode] = useState('')
   const [currentRoom, setCurrentRoom] = useState<Room | null>(null)
@@ -59,6 +60,7 @@ const Lobby: React.FC = () => {
       },
     }
   )
+  console.log("room info", currentRoom, roomData);
 
   useEffect(() => {
     const savedRoomId = getRoomId()
@@ -204,10 +206,10 @@ const Lobby: React.FC = () => {
         <div className="space-y-4">
           <button
             onClick={handleCreateRoom}
-            disabled={createRoomMutation.isLoading}
+            disabled={createRoomMutation.isPending}
             className="w-full py-3 px-4 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:bg-gray-300"
           >
-            {createRoomMutation.isLoading ? 'Creating...' : 'Create Room'}
+            {createRoomMutation.isPending ? 'Creating...' : 'Create Room'}
           </button>
           
           <button
@@ -243,10 +245,10 @@ const Lobby: React.FC = () => {
         <div className="space-y-4">
           <button
             onClick={handleJoinRoom}
-            disabled={joinRoomMutation.isLoading || roomCode.length !== 5}
+            disabled={joinRoomMutation.isPending || roomCode.length !== 5}
             className="w-full py-3 px-4 bg-green-500 text-white rounded-md hover:bg-green-600 disabled:bg-gray-300"
           >
-            {joinRoomMutation.isLoading ? 'Joining...' : 'Join Room'}
+            {joinRoomMutation.isPending ? 'Joining...' : 'Join Room'}
           </button>
           
           <button

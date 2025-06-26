@@ -1,8 +1,7 @@
 import { initTRPC } from '@trpc/server'
 import { z } from 'zod'
 import { db } from './db'
-import { observable } from '@trpc/server/observable'
-import { EventEmitter } from 'events'
+import { EventEmitter, on } from 'events'
 
 export const t = initTRPC.create()
 

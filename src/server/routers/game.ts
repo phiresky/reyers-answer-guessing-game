@@ -3,7 +3,7 @@ import { eq, desc } from 'drizzle-orm'
 import { publicProcedure, router, eventEmitter } from '../trpc'
 import { db, rooms, players, games, answers, guesses } from '../db'
 import { generateQuestion, rateGuess } from '../services/ai'
-import { observable } from '@trpc/server/observable'
+import { on } from 'events'
 
 export const gameRouter = router({
   updateConfig: publicProcedure
@@ -152,19 +152,18 @@ export const gameRouter = router({
     .input(z.object({
       roomId: z.string(),
     }))
-    .subscription(({ input }) => {
-      return observable<{ game: any }>((emit) => {
-        const onUpdate = (data: { roomId: string; game: any }) => {
-          if (data.roomId === input.roomId) {
-            emit.next({ game: data.game })
+    .subscription(async function* ({ input, signal }) {
+      try {
+        for await (const [data] of on(eventEmitter, 'gameUpdate', {
+          signal,
+        })) {
+          const updateData = data as { roomId: string; game: any }
+          if (updateData.roomId === input.roomId) {
+            yield { game: updateData.game }
           }
         }
-        
-        eventEmitter.on('gameUpdate', onUpdate)
-        
-        return () => {
-          eventEmitter.off('gameUpdate', onUpdate)
-        }
-      })
+      } finally {
+        // Cleanup if needed
+      }
     }),
 })

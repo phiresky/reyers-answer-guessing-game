@@ -3,7 +3,7 @@ import { eq, and } from 'drizzle-orm'
 import { publicProcedure, router, eventEmitter } from '../trpc'
 import { db, rooms, players } from '../db'
 import { createId } from '@paralleldrive/cuid2'
-import { observable } from '@trpc/server/observable'
+import { on } from 'events'
 
 function generateRoomCode(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
@@ -167,19 +167,18 @@ export const roomRouter = router({
     .input(z.object({
       roomId: z.string(),
     }))
-    .subscription(({ input }) => {
-      return observable<{ room: any; players: any[] }>((emit) => {
-        const onUpdate = (data: { roomId: string; room: any; players: any[] }) => {
-          if (data.roomId === input.roomId) {
-            emit.next({ room: data.room, players: data.players })
+    .subscription(async function* ({ input, signal }) {
+      try {
+        for await (const [data] of on(eventEmitter, 'roomUpdate', {
+          signal,
+        })) {
+          const updateData = data as { roomId: string; room: any; players: any[] }
+          if (updateData.roomId === input.roomId) {
+            yield { room: updateData.room, players: updateData.players }
           }
         }
-        
-        eventEmitter.on('roomUpdate', onUpdate)
-        
-        return () => {
-          eventEmitter.off('roomUpdate', onUpdate)
-        }
-      })
+      } finally {
+        // Cleanup if needed
+      }
     }),
 })

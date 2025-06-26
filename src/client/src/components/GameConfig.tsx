@@ -120,19 +120,19 @@ const GameConfig: React.FC<GameConfigProps> = ({
           {hasChanges && (
             <button
               onClick={handleUpdateConfig}
-              disabled={updateConfigMutation.isLoading}
+              disabled={updateConfigMutation.isPending}
               className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:bg-gray-300"
             >
-              {updateConfigMutation.isLoading ? 'Saving...' : 'Save Configuration'}
+              {updateConfigMutation.isPending ? 'Saving...' : 'Save Configuration'}
             </button>
           )}
           
           <button
             onClick={handleStartGame}
-            disabled={startGameMutation.isLoading}
+            disabled={startGameMutation.isPending}
             className="px-6 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 disabled:bg-gray-300"
           >
-            {startGameMutation.isLoading ? 'Starting...' : 'Start Game'}
+            {startGameMutation.isPending ? 'Starting...' : 'Start Game'}
           </button>
         </div>
       </div>

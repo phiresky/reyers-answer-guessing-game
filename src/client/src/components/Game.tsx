@@ -108,10 +108,10 @@ const Game: React.FC<GameProps> = ({ roomId, playerId, onBackToLobby }) => {
               </span>
               <button
                 onClick={handleSubmitAnswer}
-                disabled={!currentAnswer.trim() || submitAnswerMutation.isLoading}
+                disabled={!currentAnswer.trim() || submitAnswerMutation.isPending}
                 className="px-6 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:bg-gray-300"
               >
-                {submitAnswerMutation.isLoading ? 'Submitting...' : 'Submit Answer'}
+                {submitAnswerMutation.isPending ? 'Submitting...' : 'Submit Answer'}
               </button>
             </div>
           </div>
