@@ -10,20 +10,51 @@ interface GameProps {
 interface Game {
   id: string
   question: string
-  status: 'answering' | 'guessing' | 'rating' | 'completed'
+  status: 'active' | 'answering' | 'guessing' | 'rating' | 'completed'
   round: number
+}
+
+interface Answer {
+  id: string
+  playerId: string
+  answer: string
+  isSubmitted: boolean
+}
+
+interface Player {
+  id: string
+  name: string
 }
 
 const Game: React.FC<GameProps> = ({ roomId, playerId, onBackToLobby }) => {
   const [currentAnswer, setCurrentAnswer] = useState('')
+  const [currentGuess, setCurrentGuess] = useState('')
   const [currentGame, setCurrentGame] = useState<Game | null>(null)
+  const [isAnswerSubmitted, setIsAnswerSubmitted] = useState(false)
+  const [isGuessSubmitted, setIsGuessSubmitted] = useState(false)
+  const [guessTargetPlayer, setGuessTargetPlayer] = useState<Player | null>(null)
 
-  const { data: gameData, refetch: refetchGame } = trpc.game.getCurrentGame.useQuery(
+  const { data: gameData } = trpc.game.getCurrentGame.useQuery(
     { roomId },
     { enabled: !!roomId }
   )
 
-  const submitAnswerMutation = trpc.game.submitAnswer.useMutation()
+  const { data: gameAnswers } = trpc.game.getGameAnswers.useQuery(
+    { gameId: currentGame?.id || '' },
+    { enabled: !!currentGame && currentGame.status === 'answering' }
+  )
+
+  const { data: gameResults } = trpc.game.getGameResults.useQuery(
+    { gameId: currentGame?.id || '' },
+    { 
+      enabled: !!currentGame && (currentGame.status === 'rating' || currentGame.status === 'completed'),
+      refetchInterval: currentGame?.status === 'rating' ? 2000 : false,
+    }
+  )
+
+  const saveAnswerMutation = trpc.game.saveAnswer.useMutation()
+  const saveGuessMutation = trpc.game.saveGuess.useMutation()
+  const checkProgressMutation = trpc.game.checkGameProgress.useMutation()
 
   trpc.game.onGameUpdate.useSubscription(
     { roomId },
@@ -44,20 +75,92 @@ const Game: React.FC<GameProps> = ({ roomId, playerId, onBackToLobby }) => {
     }
   }, [gameData])
 
-  const handleSubmitAnswer = async () => {
+  useEffect(() => {
+    if (gameAnswers) {
+      // Check if current player has submitted answer
+      const myAnswer = gameAnswers.find((answer: Answer) => answer.playerId === playerId)
+      if (myAnswer) {
+        setCurrentAnswer(myAnswer.answer)
+        setIsAnswerSubmitted(myAnswer.isSubmitted)
+      }
+      
+      // Find a player to guess for (not self, and one who has submitted an answer)
+      const otherPlayersWithAnswers = gameAnswers.filter(
+        (answer: Answer) => answer.playerId !== playerId && answer.isSubmitted
+      )
+      
+      if (otherPlayersWithAnswers.length > 0 && !guessTargetPlayer) {
+        // For now, just pick the first one. In a real game, you might want better assignment logic
+        const targetAnswer = otherPlayersWithAnswers[0]
+        // We need to get the player info somehow - for now we'll use a placeholder
+        setGuessTargetPlayer({ id: targetAnswer.playerId, name: 'Other Player' })
+      }
+    }
+  }, [gameAnswers, playerId, guessTargetPlayer])
+
+  const handleSaveAnswer = async (submit = false) => {
     if (!currentGame || !currentAnswer.trim()) return
 
     try {
-      await submitAnswerMutation.mutateAsync({
+      await saveAnswerMutation.mutateAsync({
         gameId: currentGame.id,
         playerId,
         answer: currentAnswer.trim(),
+        submit,
       })
-      setCurrentAnswer('')
+      
+      if (submit) {
+        setIsAnswerSubmitted(true)
+      }
+      
+      // Check if game should progress
+      await checkProgressMutation.mutateAsync({ gameId: currentGame.id })
     } catch (error) {
-      console.error('Failed to submit answer:', error)
+      console.error('Failed to save answer:', error)
     }
   }
+
+  const handleSaveGuess = async (submit = false) => {
+    if (!currentGame || !currentGuess.trim() || !guessTargetPlayer) return
+
+    try {
+      await saveGuessMutation.mutateAsync({
+        gameId: currentGame.id,
+        guesserId: playerId,
+        targetPlayerId: guessTargetPlayer.id,
+        guess: currentGuess.trim(),
+        submit,
+      })
+      
+      if (submit) {
+        setIsGuessSubmitted(true)
+      }
+      
+      // Check if game should progress
+      await checkProgressMutation.mutateAsync({ gameId: currentGame.id })
+    } catch (error) {
+      console.error('Failed to save guess:', error)
+    }
+  }
+
+  // Auto-save drafts as user types
+  useEffect(() => {
+    if (currentAnswer && !isAnswerSubmitted) {
+      const timer = setTimeout(() => {
+        handleSaveAnswer(false)
+      }, 1000)
+      return () => clearTimeout(timer)
+    }
+  }, [currentAnswer, isAnswerSubmitted])
+
+  useEffect(() => {
+    if (currentGuess && !isGuessSubmitted && guessTargetPlayer) {
+      const timer = setTimeout(() => {
+        handleSaveGuess(false)
+      }, 1000)
+      return () => clearTimeout(timer)
+    }
+  }, [currentGuess, isGuessSubmitted, guessTargetPlayer])
 
   if (!currentGame) {
     return (
@@ -92,55 +195,224 @@ const Game: React.FC<GameProps> = ({ roomId, playerId, onBackToLobby }) => {
         </div>
 
         {currentGame.status === 'answering' && (
-          <div className="bg-blue-50 p-6 rounded-lg">
-            <h3 className="text-xl font-semibold mb-4">Your Answer</h3>
-            <textarea
-              value={currentAnswer}
-              onChange={(e) => setCurrentAnswer(e.target.value)}
-              placeholder="Enter your answer (around one sentence)"
-              className="w-full px-4 py-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-              rows={3}
-              maxLength={500}
-            />
-            <div className="flex justify-between items-center mt-4">
-              <span className="text-sm text-gray-500">
-                {currentAnswer.length}/500 characters
-              </span>
-              <button
-                onClick={handleSubmitAnswer}
-                disabled={!currentAnswer.trim() || submitAnswerMutation.isPending}
-                className="px-6 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:bg-gray-300"
-              >
-                {submitAnswerMutation.isPending ? 'Submitting...' : 'Submit Answer'}
-              </button>
+          <div className="space-y-6">
+            {/* Answer Section */}
+            <div className="bg-blue-50 p-6 rounded-lg">
+              <div className="flex items-center space-x-2 mb-4">
+                <h3 className="text-xl font-semibold">Your Answer</h3>
+                {isAnswerSubmitted && (
+                  <span className="px-2 py-1 bg-green-100 text-green-800 text-sm rounded-full">
+                    ✓ Submitted
+                  </span>
+                )}
+              </div>
+              <textarea
+                value={currentAnswer}
+                onChange={(e) => setCurrentAnswer(e.target.value)}
+                placeholder="Enter your answer (around one sentence)"
+                className="w-full px-4 py-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                rows={3}
+                maxLength={500}
+                disabled={isAnswerSubmitted}
+              />
+              <div className="flex justify-between items-center mt-4">
+                <span className="text-sm text-gray-500">
+                  {currentAnswer.length}/500 characters
+                </span>
+                {!isAnswerSubmitted && (
+                  <button
+                    onClick={() => handleSaveAnswer(true)}
+                    disabled={!currentAnswer.trim() || saveAnswerMutation.isPending}
+                    className="px-6 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:bg-gray-300"
+                  >
+                    {saveAnswerMutation.isPending ? 'Submitting...' : 'Submit Answer'}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Guess Section */}
+            {guessTargetPlayer && (
+              <div className="bg-green-50 p-6 rounded-lg">
+                <div className="flex items-center space-x-2 mb-4">
+                  <h3 className="text-xl font-semibold">Your Guess</h3>
+                  {isGuessSubmitted && (
+                    <span className="px-2 py-1 bg-green-100 text-green-800 text-sm rounded-full">
+                      ✓ Submitted
+                    </span>
+                  )}
+                </div>
+                <p className="text-gray-600 mb-4">
+                  What do you think <strong>{guessTargetPlayer.name}</strong> answered?
+                </p>
+                <textarea
+                  value={currentGuess}
+                  onChange={(e) => setCurrentGuess(e.target.value)}
+                  placeholder={`Enter your guess for ${guessTargetPlayer.name}'s answer...`}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 resize-none"
+                  rows={3}
+                  maxLength={500}
+                  disabled={isGuessSubmitted}
+                />
+                <div className="flex justify-between items-center mt-4">
+                  <span className="text-sm text-gray-500">
+                    {currentGuess.length}/500 characters
+                  </span>
+                  {!isGuessSubmitted && (
+                    <button
+                      onClick={() => handleSaveGuess(true)}
+                      disabled={!currentGuess.trim() || saveGuessMutation.isPending}
+                      className="px-6 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 disabled:bg-gray-300"
+                    >
+                      {saveGuessMutation.isPending ? 'Submitting...' : 'Submit Guess'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Status indicators for other players */}
+            {gameAnswers && (
+              <div className="bg-gray-50 p-4 rounded-lg">
+                <h4 className="font-semibold mb-3">Player Status</h4>
+                <div className="space-y-2">
+                  {gameAnswers.map((answer: Answer) => (
+                    <div key={answer.id} className="flex items-center space-x-2">
+                      <span className="text-sm">{answer.playerId === playerId ? 'You' : 'Player'}:</span>
+                      {answer.isSubmitted ? (
+                        <span className="px-2 py-1 bg-green-100 text-green-800 text-xs rounded">
+                          ✓ Submitted
+                        </span>
+                      ) : (
+                        <span className="px-2 py-1 bg-yellow-100 text-yellow-800 text-xs rounded">
+                          ✏️ Writing...
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {currentGame.status === 'rating' && gameResults && (
+          <div className="bg-yellow-50 p-6 rounded-lg">
+            <h3 className="text-xl font-semibold mb-6">Round {currentGame.round} Results</h3>
+            <p className="text-gray-600 mb-6">AI is rating the guesses...</p>
+            
+            <div className="space-y-6">
+              {gameResults.results.map((result: any, index: number) => (
+                <div key={index} className="bg-white p-4 rounded-lg border">
+                  <div className="mb-3">
+                    <h4 className="font-semibold text-lg">
+                      {result.player?.name} answered:
+                    </h4>
+                    <p className="text-gray-800 italic">"{result.answer}"</p>
+                  </div>
+                  
+                  {result.guess && result.guesser && (
+                    <div className="mb-3">
+                      <h5 className="font-medium text-gray-700">
+                        {result.guesser.name}'s guess for {result.player?.name}'s answer:
+                      </h5>
+                      <p className="text-gray-600">"{result.guess}"</p>
+                    </div>
+                  )}
+                  
+                  {result.isRated && result.rating !== null ? (
+                    <div className="flex items-center space-x-2">
+                      <span className="font-medium">Rating:</span>
+                      <div className="flex items-center space-x-1">
+                        <span className="text-2xl font-bold text-blue-600">
+                          {result.rating}/10
+                        </span>
+                        <div className="flex">
+                          {[...Array(10)].map((_, i) => (
+                            <div
+                              key={i}
+                              className={`w-3 h-3 rounded-full mx-0.5 ${
+                                i < result.rating ? 'bg-blue-500' : 'bg-gray-200'
+                              }`}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center space-x-2">
+                      <span className="text-gray-500">Rating:</span>
+                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500"></div>
+                      <span className="text-gray-500">AI is rating...</span>
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
         )}
 
-        {currentGame.status === 'guessing' && (
-          <div className="bg-green-50 p-6 rounded-lg">
-            <h3 className="text-xl font-semibold mb-4">Guessing Phase</h3>
-            <p className="text-gray-600">
-              Now you'll guess what other players answered!
-            </p>
-          </div>
-        )}
-
-        {currentGame.status === 'rating' && (
-          <div className="bg-yellow-50 p-6 rounded-lg">
-            <h3 className="text-xl font-semibold mb-4">AI is Rating Answers</h3>
-            <p className="text-gray-600">
-              Please wait while the AI rates everyone's guesses...
-            </p>
-          </div>
-        )}
-
-        {currentGame.status === 'completed' && (
+        {currentGame.status === 'completed' && gameResults && (
           <div className="bg-purple-50 p-6 rounded-lg">
-            <h3 className="text-xl font-semibold mb-4">Round Complete!</h3>
-            <p className="text-gray-600">
-              Results will be shown here...
-            </p>
+            <h3 className="text-xl font-semibold mb-6">Round {currentGame.round} Results</h3>
+            
+            <div className="space-y-6">
+              {gameResults.results.map((result: any, index: number) => (
+                <div key={index} className="bg-white p-4 rounded-lg border">
+                  <div className="mb-3">
+                    <h4 className="font-semibold text-lg">
+                      {result.player?.name} answered:
+                    </h4>
+                    <p className="text-gray-800 italic">"{result.answer}"</p>
+                  </div>
+                  
+                  {result.guess && result.guesser && (
+                    <div className="mb-3">
+                      <h5 className="font-medium text-gray-700">
+                        {result.guesser.name}'s guess for {result.player?.name}'s answer:
+                      </h5>
+                      <p className="text-gray-600">"{result.guess}"</p>
+                    </div>
+                  )}
+                  
+                  {result.isRated && result.rating !== null ? (
+                    <div className="flex items-center space-x-2">
+                      <span className="font-medium">Rating:</span>
+                      <div className="flex items-center space-x-1">
+                        <span className="text-2xl font-bold text-blue-600">
+                          {result.rating}/10
+                        </span>
+                        <div className="flex">
+                          {[...Array(10)].map((_, i) => (
+                            <div
+                              key={i}
+                              className={`w-3 h-3 rounded-full mx-0.5 ${
+                                i < result.rating ? 'bg-blue-500' : 'bg-gray-200'
+                              }`}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center space-x-2">
+                      <span className="text-gray-500">Rating:</span>
+                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500"></div>
+                      <span className="text-gray-500">AI is rating...</span>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            
+            <div className="mt-8 text-center">
+              <button
+                onClick={onBackToLobby}
+                className="px-6 py-3 bg-blue-500 text-white rounded-md hover:bg-blue-600"
+              >
+                Back to Lobby
+              </button>
+            </div>
           </div>
         )}
       </div>

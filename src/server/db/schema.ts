@@ -42,7 +42,10 @@ export const answers = sqliteTable('answers', {
   gameId: text('game_id').notNull().references(() => games.id, { onDelete: 'cascade' }),
   playerId: text('player_id').notNull().references(() => players.id, { onDelete: 'cascade' }),
   answer: text('answer').notNull(),
-  submittedAt: integer('submitted_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
+  isSubmitted: integer('is_submitted', { mode: 'boolean' }).notNull().default(false),
+  submittedAt: integer('submitted_at', { mode: 'timestamp' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
 })
 
 export const guesses = sqliteTable('guesses', {
@@ -51,9 +54,12 @@ export const guesses = sqliteTable('guesses', {
   guesserId: text('guesser_id').notNull().references(() => players.id, { onDelete: 'cascade' }),
   targetPlayerId: text('target_player_id').notNull().references(() => players.id, { onDelete: 'cascade' }),
   guess: text('guess').notNull(),
+  isSubmitted: integer('is_submitted', { mode: 'boolean' }).notNull().default(false),
   rating: real('rating'),
-  submittedAt: integer('submitted_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
+  submittedAt: integer('submitted_at', { mode: 'timestamp' }),
   ratedAt: integer('rated_at', { mode: 'timestamp' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
 })
 
 export type Room = typeof rooms.$inferSelect

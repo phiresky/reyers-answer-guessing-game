@@ -3,7 +3,10 @@ CREATE TABLE `answers` (
 	`game_id` text NOT NULL,
 	`player_id` text NOT NULL,
 	`answer` text NOT NULL,
-	`submitted_at` integer NOT NULL,
+	`is_submitted` integer DEFAULT false NOT NULL,
+	`submitted_at` integer,
+	`created_at` integer NOT NULL,
+	`updated_at` integer NOT NULL,
 	FOREIGN KEY (`game_id`) REFERENCES `games`(`id`) ON UPDATE no action ON DELETE cascade,
 	FOREIGN KEY (`player_id`) REFERENCES `players`(`id`) ON UPDATE no action ON DELETE cascade
 );
@@ -25,9 +28,12 @@ CREATE TABLE `guesses` (
 	`guesser_id` text NOT NULL,
 	`target_player_id` text NOT NULL,
 	`guess` text NOT NULL,
+	`is_submitted` integer DEFAULT false NOT NULL,
 	`rating` real,
-	`submitted_at` integer NOT NULL,
+	`submitted_at` integer,
 	`rated_at` integer,
+	`created_at` integer NOT NULL,
+	`updated_at` integer NOT NULL,
 	FOREIGN KEY (`game_id`) REFERENCES `games`(`id`) ON UPDATE no action ON DELETE cascade,
 	FOREIGN KEY (`guesser_id`) REFERENCES `players`(`id`) ON UPDATE no action ON DELETE cascade,
 	FOREIGN KEY (`target_player_id`) REFERENCES `players`(`id`) ON UPDATE no action ON DELETE cascade

@@ -1,15 +1,20 @@
-import { streamText, generateText } from 'ai'
-import { anthropic as ai } from '@ai-sdk/anthropic';
+import { streamText, generateText } from "ai";
+import { anthropic as ai } from "@ai-sdk/anthropic";
 
+const model = process.env.ANTHROPIC_MODEL!;
+if (!model)
+  throw new Error(
+    "ANTHROPIC_MODEL environment variable is not set. Please set it to the desired model name."
+  );
 
-const model = process.env.ANTHROPIC_MODEL;
-if(!model) throw new Error('ANOTHER_MODEL environment variable is not set. Please set it to the desired model name.');
-export async function generateQuestion(prompt: string): Promise<AsyncIterable<string>> {
+export async function generateQuestion(
+  prompt: string
+): Promise<AsyncIterable<string>> {
   const result = await streamText({
     model: ai(model),
     messages: [
       {
-        role: 'system',
+        role: "system",
         content: `You are a creative question generator for a social guessing game. Generate interesting, thought-provoking questions based on the given prompt. The questions should:
         
         1. Be open-ended and allow for creative, personal answers
@@ -21,22 +26,26 @@ export async function generateQuestion(prompt: string): Promise<AsyncIterable<st
         Generate exactly ONE question. Do not include any prefixes, suffixes, or explanations - just the question itself.`,
       },
       {
-        role: 'user',
+        role: "user",
         content: `Generate a question based on this theme: "${prompt}"`,
       },
     ],
     temperature: 0.9,
-  })
+  });
 
-  return result.textStream
+  return result.textStream;
 }
 
-export async function rateGuess(originalAnswer: string, guess: string, question: string): Promise<number> {
+export async function rateGuess(
+  originalAnswer: string,
+  guess: string,
+  question: string
+): Promise<number> {
   const result = await generateText({
-    model: ai('openai/gpt-3.5-turbo'),
+    model: ai(model),
     messages: [
       {
-        role: 'system',
+        role: "system",
         content: `You are an AI judge for a social guessing game. Players answer questions, then try to guess what other players answered.
 
 Your job is to rate how well a guess matches the original answer on a scale of 1-10:
@@ -57,7 +66,7 @@ Consider:
 Respond with ONLY a number from 1-10, nothing else.`,
       },
       {
-        role: 'user',
+        role: "user",
         content: `Question: "${question}"
 
 Original Answer: "${originalAnswer}"
@@ -67,8 +76,8 @@ Rate this guess (1-10):`,
       },
     ],
     temperature: 0.3,
-  })
+  });
 
-  const rating = parseFloat(result.text.trim())
-  return isNaN(rating) ? 5 : Math.min(10, Math.max(1, rating))
+  const rating = parseFloat(result.text.trim());
+  return isNaN(rating) ? 5 : Math.min(10, Math.max(1, rating));
 }

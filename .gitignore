@@ -1,3 +1,4 @@
 node_modules
 game.db
 .env
+/dist

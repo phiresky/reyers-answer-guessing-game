@@ -1,7 +1,9 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "module": "CommonJS",
+    "module": "es2022",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": false,
     "noEmit": false,
     "outDir": "./dist/server",
     "jsx": "preserve"

@@ -18,7 +18,7 @@ server.register(fastifyTRPCPlugin, {
   prefix: '/trpc',
   trpcOptions: { 
     router: appRouter,
-    createContext: ({ req }): Context => {
+    createContext: ({ req }: any): Context => {
       const sessionId = req.headers['x-session-id'] as string
       return { sessionId }
     },
