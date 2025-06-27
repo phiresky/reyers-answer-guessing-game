@@ -25,7 +25,7 @@ server.register(fastifyTRPCPlugin, {
   },
 })
 
-const port = 4000;
+const port = parseInt(process.env.PORT || '4000', 10);
 const start = async () => {
   try {
     await server.listen({ port })
