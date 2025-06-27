@@ -378,7 +378,7 @@ const Game: React.FC<GameProps> = ({ roomId, playerId, onBackToLobby, onExitRoom
         )}
 
         <div className="mb-8">
-          <h2 className="text-2xl font-semibold mb-4 text-center">
+          <h2 className="text-2xl font-semibold mb-4 text-center whitespace-pre-wrap">
             {currentGame.question}
           </h2>
         </div>

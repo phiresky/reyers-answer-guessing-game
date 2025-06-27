@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { eq, and } from 'drizzle-orm'
 import { publicProcedure, router, eventEmitter } from '../trpc'
-import { db, rooms, players } from '../db'
+import { db, rooms, players, answers, guesses } from '../db'
 import { createId } from '@paralleldrive/cuid2'
 import { on } from 'events'
 import type { RoomUpdateData } from '../../shared/types'
@@ -233,8 +233,23 @@ export const roomRouter = router({
         throw new Error('Player not found')
       }
       
-      // Remove the player from the room completely
-      await db.delete(players).where(eq(players.id, input.playerId))
+      // Check if player has participated in any games (has answers or guesses)
+      const playerAnswers = await db.select().from(answers).where(eq(answers.playerId, input.playerId)).limit(1)
+      const playerGuesses = await db.select().from(guesses).where(eq(guesses.guesserId, input.playerId)).limit(1)
+      const hasPlayedRounds = playerAnswers.length > 0 || playerGuesses.length > 0
+      
+      if (hasPlayedRounds) {
+        // Player has played rounds, so just mark them as offline instead of deleting
+        await db.update(players)
+          .set({ 
+            status: 'offline',
+            lastSeen: new Date()
+          })
+          .where(eq(players.id, input.playerId))
+      } else {
+        // Player hasn't played any rounds, safe to delete completely
+        await db.delete(players).where(eq(players.id, input.playerId))
+      }
       
       // Get updated room state and emit update
       const [room] = await db.select().from(rooms).where(eq(rooms.id, player.roomId)).limit(1)
