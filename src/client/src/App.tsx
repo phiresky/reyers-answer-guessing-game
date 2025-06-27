@@ -6,6 +6,19 @@ import Lobby from './components/Lobby'
 
 const queryClient = new QueryClient()
 
+// Get the base URL for tRPC API
+// In development: use the dev server proxy
+// In production: use relative path that works with nginx routing
+const getTrpcUrl = () => {
+  if (import.meta.env.DEV) {
+    return 'http://localhost:4000/trpc'
+  }
+  
+  // In production, use relative path that respects the base path
+  const basePath = import.meta.env.BASE_URL || '/'
+  return `${window.location.origin}${basePath}trpc`.replace(/\/+/g, '/').replace(':/', '://')
+}
+
 const trpcClient = trpc.createClient({
   links: [
     splitLink({
@@ -13,10 +26,10 @@ const trpcClient = trpc.createClient({
         return op.type === 'subscription'
       },
       true: httpSubscriptionLink({
-        url: 'http://localhost:4000/trpc',
+        url: getTrpcUrl(),
       }),
       false: httpBatchLink({
-        url: 'http://localhost:4000/trpc',
+        url: getTrpcUrl(),
         headers() {
           return {
             'x-session-id': getSessionId(),
