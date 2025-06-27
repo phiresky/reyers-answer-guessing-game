@@ -15,7 +15,7 @@ const getTrpcUrl = () => {
   }
   
   // In production, use relative path that respects the base path
-  const basePath = import.meta.env.BASE_URL || '/'
+  const basePath = import.meta.env.BASE_URL + "/" || '/'
   return `${window.location.origin}${basePath}trpc`.replace(/\/+/g, '/').replace(':/', '://')
 }
 
