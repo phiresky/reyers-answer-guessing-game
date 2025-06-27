@@ -6,8 +6,9 @@
   "scripts": {
     "dev": "concurrently \"npm run server:dev\" \"npm run client:dev\"",
     "server:dev": "tsx watch src/server/index.ts",
+    "server:run": "tsx src/server/index.ts",
     "client:dev": "vite",
-    "build": "npm run client:build && npm run server:build",
+    "build": "pnpm run client:build",
     "client:build": "vite build",
     "server:build": "tsc --project tsconfig.server.json",
     "db:generate": "drizzle-kit generate",

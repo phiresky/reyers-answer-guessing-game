@@ -507,14 +507,14 @@ const Lobby: React.FC = () => {
                 <div className="flex-1">
                   <input
                     type="text"
-                    value={`${window.location.origin}/?room=${currentRoom.code}`}
+                    value={`${window.location.origin}${import.meta.env.BASE_URL || '/'}?room=${currentRoom.code}`.replace(/\/+/g, '/').replace(':/', '://')}
                     readOnly
                     className="w-full px-3 py-2 bg-white border border-gray-300 rounded-md text-sm"
                   />
                 </div>
                 <button
                   onClick={() => {
-                    navigator.clipboard.writeText(`${window.location.origin}/?room=${currentRoom.code}`)
+                    navigator.clipboard.writeText(`${window.location.origin}${import.meta.env.BASE_URL || '/'}?room=${currentRoom.code}`.replace(/\/+/g, '/').replace(':/', '://'))
                       .then(() => {
                         // Could add a toast notification here
                         alert('Invite link copied to clipboard!')
