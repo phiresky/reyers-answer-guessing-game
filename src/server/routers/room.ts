@@ -4,6 +4,7 @@ import { publicProcedure, router, eventEmitter } from '../trpc'
 import { db, rooms, players } from '../db'
 import { createId } from '@paralleldrive/cuid2'
 import { on } from 'events'
+import type { RoomUpdateData } from '../../shared/types'
 
 function generateRoomCode(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
@@ -203,9 +204,12 @@ export const roomRouter = router({
       playerId: z.string(),
     }))
     .mutation(async ({ input }) => {
-      // Just mark as offline, don't remove from room
+      // Mark as offline and update lastSeen timestamp
       await db.update(players)
-        .set({ status: 'offline' })
+        .set({ 
+          status: 'offline',
+          lastSeen: new Date()
+        })
         .where(eq(players.id, input.playerId))
       
       const [player] = await db.select().from(players).where(eq(players.id, input.playerId)).limit(1)
@@ -260,6 +264,45 @@ export const roomRouter = router({
       
       return { success: true }
     }),
+
+  kickPlayer: publicProcedure
+    .input(z.object({
+      playerId: z.string(),
+      kickerId: z.string(),
+    }))
+    .mutation(async ({ input }) => {
+      // Get the player being kicked to find their room
+      const [playerToKick] = await db.select().from(players).where(eq(players.id, input.playerId)).limit(1)
+      
+      if (!playerToKick) {
+        throw new Error('Player not found')
+      }
+      
+      // Check if kicker is the room creator
+      const [room] = await db.select().from(rooms).where(eq(rooms.id, playerToKick.roomId)).limit(1)
+      
+      if (!room) {
+        throw new Error('Room not found')
+      }
+      
+      if (room.creatorId !== input.kickerId) {
+        throw new Error('Only the room creator can kick players')
+      }
+      
+      // Cannot kick yourself
+      if (input.playerId === input.kickerId) {
+        throw new Error('Cannot kick yourself')
+      }
+      
+      // Remove the player from the room
+      await db.delete(players).where(eq(players.id, input.playerId))
+      
+      // Emit room update to notify all players
+      const roomPlayers = await db.select().from(players).where(eq(players.roomId, playerToKick.roomId))
+      eventEmitter.emit('roomUpdate', { roomId: playerToKick.roomId, room, players: roomPlayers })
+      
+      return { success: true }
+    }),
     
   onRoomUpdate: publicProcedure
     .input(z.object({
@@ -267,10 +310,18 @@ export const roomRouter = router({
     }))
     .subscription(async function* ({ input, signal }) {
       try {
+        // Send initial room state immediately when client connects
+        const [room] = await db.select().from(rooms).where(eq(rooms.id, input.roomId)).limit(1)
+        if (room) {
+          const roomPlayers = await db.select().from(players).where(eq(players.roomId, input.roomId))
+          yield { room, players: roomPlayers }
+        }
+
+        // Then listen for updates
         for await (const [data] of on(eventEmitter, 'roomUpdate', {
           signal,
         })) {
-          const updateData = data as { roomId: string; room: any; players: any[] }
+          const updateData = data as RoomUpdateData
           if (updateData.roomId === input.roomId) {
             yield { room: updateData.room, players: updateData.players }
           }

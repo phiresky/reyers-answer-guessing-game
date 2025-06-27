@@ -1,33 +1,50 @@
 import { z } from 'zod'
-import { eq, and, ne } from 'drizzle-orm'
+import { eq, and, sql } from 'drizzle-orm'
 import { publicProcedure, router, eventEmitter } from '../trpc'
 import { db, rooms, players, games, answers, guesses } from '../db'
 import { generateQuestion, rateGuess } from '../services/ai'
 import { on } from 'events'
 
 async function emitGameUpdateWithGuesses(roomId: string, game: any) {
-  // Get guess data for this game
+  // Get guess and answer data for this game
   const gameGuesses = await db.select().from(guesses).where(eq(guesses.gameId, game.id))
-  eventEmitter.emit('gameUpdate', { roomId, game, guesses: gameGuesses })
+  const gameAnswers = await db.select().from(answers).where(eq(answers.gameId, game.id))
+  eventEmitter.emit('gameUpdate', { roomId, game, guesses: gameGuesses, answers: gameAnswers })
 }
 
 async function startAIRating(gameId: string) {
-  // Get all guesses for this game
-  const gameGuesses = await db.select().from(guesses).where(eq(guesses.gameId, gameId))
-  const [game] = await db.select().from(games).where(eq(games.id, gameId)).limit(1)
-  
-  if (!game) return
-  
-  // Rate each guess
-  for (const guess of gameGuesses) {
-    // Get the original answer
-    const [originalAnswer] = await db.select().from(answers).where(
-      and(eq(answers.gameId, gameId), eq(answers.playerId, guess.targetPlayerId))
-    ).limit(1)
+  try {
+    // Get all guesses for this game
+    const gameGuesses = await db.select().from(guesses).where(eq(guesses.gameId, gameId))
+    const [game] = await db.select().from(games).where(eq(games.id, gameId)).limit(1)
     
-    if (originalAnswer) {
+    if (!game) return
+
+    console.log(`Starting AI rating for game ${gameId} with ${gameGuesses.length} guesses`)
+    
+    // Process all ratings in parallel with individual error handling
+    const ratingPromises = gameGuesses.map(async (guess) => {
       try {
+        // Get the original answer
+        const [originalAnswer] = await db.select().from(answers).where(
+          and(eq(answers.gameId, gameId), eq(answers.playerId, guess.targetPlayerId))
+        ).limit(1)
+        
+        if (!originalAnswer) {
+          console.error(`No original answer found for guess ${guess.id}`)
+          // Set default rating if no original answer
+          await db.update(guesses)
+            .set({ 
+              rating: 5,
+              ratedAt: new Date() 
+            })
+            .where(eq(guesses.id, guess.id))
+          return
+        }
+
+        console.log(`Rating guess ${guess.id}: "${guess.guess}" vs "${originalAnswer.answer}"`)
         const rating = await rateGuess(originalAnswer.answer, guess.guess, game.question)
+        console.log(`Rated guess ${guess.id}: ${rating}/10`)
         
         // Update the guess with the rating
         await db.update(guesses)
@@ -37,7 +54,7 @@ async function startAIRating(gameId: string) {
           })
           .where(eq(guesses.id, guess.id))
       } catch (error) {
-        console.error('Failed to rate guess:', error)
+        console.error(`Failed to rate guess ${guess.id}:`, error)
         // Set a default rating if AI fails
         await db.update(guesses)
           .set({ 
@@ -46,20 +63,66 @@ async function startAIRating(gameId: string) {
           })
           .where(eq(guesses.id, guess.id))
       }
+    })
+
+    // Wait for all ratings to complete
+    await Promise.all(ratingPromises)
+    console.log(`Completed rating for game ${gameId}`)
+    
+    // Calculate and award points based on ratings
+    const finalGuesses = await db.select().from(guesses).where(eq(guesses.gameId, gameId))
+    for (const guess of finalGuesses) {
+      if (guess.rating) {
+        // Award points to the player who was guessed (their answer was rated)
+        await db.update(players)
+          .set({ 
+            totalScore: sql`${players.totalScore} + ${guess.rating}`
+          })
+          .where(eq(players.id, guess.targetPlayerId))
+        
+        console.log(`Awarded ${guess.rating} points to player ${guess.targetPlayerId}`)
+      }
+    }
+    
+    // Mark game as completed
+    await db.update(games)
+      .set({ 
+        status: 'completed',
+        endedAt: new Date() 
+      })
+      .where(eq(games.id, gameId))
+    
+    // Emit game update with guess data
+    const updatedGame = await db.select().from(games).where(eq(games.id, gameId)).limit(1)
+    await emitGameUpdateWithGuesses(game.roomId, updatedGame[0])
+    
+    // Also emit room update to refresh player scores
+    const [room] = await db.select().from(rooms).where(eq(rooms.id, game.roomId)).limit(1)
+    const updatedPlayers = await db.select().from(players).where(eq(players.roomId, game.roomId))
+    if (room) {
+      eventEmitter.emit('roomUpdate', { roomId: game.roomId, room, players: updatedPlayers })
+    }
+    
+    console.log(`Game ${gameId} marked as completed and updates emitted`)
+  } catch (error) {
+    console.error(`Critical error in startAIRating for game ${gameId}:`, error)
+    // Ensure game is marked as completed even if rating fails
+    try {
+      await db.update(games)
+        .set({ 
+          status: 'completed',
+          endedAt: new Date() 
+        })
+        .where(eq(games.id, gameId))
+      
+      const updatedGame = await db.select().from(games).where(eq(games.id, gameId)).limit(1)
+      if (updatedGame[0]) {
+        await emitGameUpdateWithGuesses(updatedGame[0].roomId, updatedGame[0])
+      }
+    } catch (fallbackError) {
+      console.error(`Failed to complete game ${gameId} in fallback:`, fallbackError)
     }
   }
-  
-  // Mark game as completed
-  await db.update(games)
-    .set({ 
-      status: 'completed',
-      endedAt: new Date() 
-    })
-    .where(eq(games.id, gameId))
-  
-  // Emit game update with guess data
-  const updatedGame = await db.select().from(games).where(eq(games.id, gameId)).limit(1)
-  await emitGameUpdateWithGuesses(game.roomId, updatedGame[0])
 }
 
 export const gameRouter = router({
@@ -157,30 +220,54 @@ export const gameRouter = router({
         .limit(1)
       
       if (!currentGame) {
-        // Get previous questions from this room to avoid duplicates
-        const previousGames = await db.select({ question: games.question }).from(games)
-          .where(eq(games.roomId, input.roomId))
-        const previousQuestions = previousGames.map(g => g.question)
-        
-        const questionStream = await generateQuestion(room.initialPrompt, previousQuestions)
-        let question = ''
-        
-        for await (const chunk of questionStream) {
-          question += chunk
+        try {
+          // Get previous questions from this room to avoid duplicates
+          const previousGames = await db.select({ question: games.question }).from(games)
+            .where(eq(games.roomId, input.roomId))
+          const previousQuestions = previousGames.map(g => g.question)
+          
+          const questionStream = await generateQuestion(room.initialPrompt, previousQuestions)
+          let question = ''
+          
+          for await (const chunk of questionStream) {
+            question += chunk
+          }
+          
+          const [newGame] = await db.insert(games).values({
+            roomId: input.roomId,
+            round: room.currentRound,
+            question: question.trim(),
+            status: 'answering',
+          }).returning()
+          
+          await emitGameUpdateWithGuesses(input.roomId, newGame)
+          
+          // Return same data structure as subscription
+          const gameGuesses = await db.select().from(guesses).where(eq(guesses.gameId, newGame.id))
+          const gameAnswers = await db.select().from(answers).where(eq(answers.gameId, newGame.id))
+          return { game: newGame, guesses: gameGuesses, answers: gameAnswers }
+        } catch (error) {
+          // If insert fails due to unique constraint (another player created the game), 
+          // retry the query to get the existing game
+          const [existingGame] = await db.select().from(games)
+            .where(and(eq(games.roomId, input.roomId), eq(games.round, room.currentRound)))
+            .limit(1)
+          
+          if (existingGame) {
+            const gameGuesses = await db.select().from(guesses).where(eq(guesses.gameId, existingGame.id))
+            const gameAnswers = await db.select().from(answers).where(eq(answers.gameId, existingGame.id))
+            return { game: existingGame, guesses: gameGuesses, answers: gameAnswers }
+          }
+          
+          // If still no game found, re-throw the error
+          throw error
         }
-        
-        const [newGame] = await db.insert(games).values({
-          roomId: input.roomId,
-          round: room.currentRound,
-          question: question.trim(),
-          status: 'answering',
-        }).returning()
-        
-        await emitGameUpdateWithGuesses(input.roomId, newGame)
-        return newGame
       }
       
-      return currentGame
+      // Return same data structure as subscription
+      const gameGuesses = await db.select().from(guesses).where(eq(guesses.gameId, currentGame.id))
+      const gameAnswers = await db.select().from(answers).where(eq(answers.gameId, currentGame.id))
+      return { game: currentGame, guesses: gameGuesses, answers: gameAnswers }
     }),
     
   saveAnswer: publicProcedure
@@ -226,6 +313,10 @@ export const gameRouter = router({
           submittedAt: input.submit ? new Date() : null,
         })
       }
+      
+      // Emit game update with guess data when answers are submitted
+      // This allows other players to see updated activity status
+      await emitGameUpdateWithGuesses(game.roomId, game)
       
       return { success: true }
     }),
@@ -289,6 +380,10 @@ export const gameRouter = router({
         })
       }
       
+      // Emit game update with guess data when guesses are submitted
+      // This allows other players to see updated activity status
+      await emitGameUpdateWithGuesses(game.roomId, game)
+      
       return { success: true }
     }),
     
@@ -337,23 +432,44 @@ export const gameRouter = router({
     .query(async ({ input }) => {
       const [game] = await db.select().from(games).where(eq(games.id, input.gameId)).limit(1)
       
-      if (!game || game.status !== 'guessing') {
+      if (!game) {
         return null
       }
       
-      // Get all players in the room except the current player
-      const roomPlayers = await db.select().from(players).where(
-        and(eq(players.roomId, game.roomId), ne(players.id, input.playerId))
-      )
+      // Get all players in the room
+      const roomPlayers = await db.select().from(players).where(eq(players.roomId, game.roomId))
       
-      if (roomPlayers.length === 0) {
+      if (roomPlayers.length < 2) {
         return null
       }
       
-      // Simple random assignment for now
-      // In a real game, you might want more sophisticated assignment logic
-      const randomIndex = Math.floor(Math.random() * roomPlayers.length)
-      return roomPlayers[randomIndex]
+      // Create deterministic round-robin assignment that varies by round
+      // This ensures everyone gets assigned exactly one person to guess for, but the assignment changes each round
+      const sortedPlayers = roomPlayers.sort((a, b) => a.id.localeCompare(b.id))
+      const currentPlayerIndex = sortedPlayers.findIndex(p => p.id === input.playerId)
+      
+      if (currentPlayerIndex === -1) {
+        return null
+      }
+      
+      // Use the round number to rotate the assignment pattern
+      // Round 1: player[0] -> player[1], player[1] -> player[2], etc.
+      // Round 2: player[0] -> player[2], player[1] -> player[3], etc.
+      // Round 3: player[0] -> player[3], player[1] -> player[4], etc.
+      const offset = game.round % sortedPlayers.length
+      const targetIndex = (currentPlayerIndex + offset) % sortedPlayers.length
+      
+      // If the target is the same as current player, use next player instead
+      const finalTargetIndex = targetIndex === currentPlayerIndex 
+        ? (currentPlayerIndex + 1) % sortedPlayers.length 
+        : targetIndex
+      
+      const targetPlayer = sortedPlayers[finalTargetIndex]
+      
+      return {
+        id: targetPlayer.id,
+        name: targetPlayer.name
+      }
     }),
     
   getGameResults: publicProcedure
@@ -426,9 +542,11 @@ export const gameRouter = router({
       
       if (readyPlayers.length >= roomPlayers.length) {
         // All players ready, start next round
+        console.log(`All ${roomPlayers.length} players ready, starting next round`)
         const [room] = await db.select().from(rooms).where(eq(rooms.id, game.roomId)).limit(1)
         
         if (room && room.currentRound < room.totalRounds) {
+          console.log(`Moving from round ${room.currentRound} to ${room.currentRound + 1}`)
           // Move to next round
           await db.update(rooms)
             .set({ currentRound: room.currentRound + 1 })
@@ -442,8 +560,13 @@ export const gameRouter = router({
           // Emit room update to trigger new game creation
           const updatedRoom = await db.select().from(rooms).where(eq(rooms.id, room.id)).limit(1)
           const updatedPlayers = await db.select().from(players).where(eq(players.roomId, game.roomId))
+          console.log(`Emitting room update for round ${updatedRoom[0].currentRound}`)
           eventEmitter.emit('roomUpdate', { roomId: room.id, room: updatedRoom[0], players: updatedPlayers })
+        } else {
+          console.log(`Game finished or room not found. Current round: ${room?.currentRound}, Total rounds: ${room?.totalRounds}`)
         }
+      } else {
+        console.log(`${readyPlayers.length}/${roomPlayers.length} players ready`)
       }
       
       return { success: true }
@@ -474,9 +597,9 @@ export const gameRouter = router({
         for await (const [data] of on(eventEmitter, 'gameUpdate', {
           signal,
         })) {
-          const updateData = data as { roomId: string; game: any }
+          const updateData = data as { roomId: string; game: any; guesses: any[]; answers: any[] }
           if (updateData.roomId === input.roomId) {
-            yield { game: updateData.game }
+            yield { game: updateData.game, guesses: updateData.guesses, answers: updateData.answers }
           }
         }
       } finally {

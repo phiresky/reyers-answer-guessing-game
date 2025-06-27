@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { trpc } from '../trpc'
 import { getSessionId, getPlayerName, setPlayerName, getRoomId, setRoomId, clearRoomId } from '../utils/storage'
 import { getRoomCodeFromUrl, setRoomCodeInUrl, clearRoomCodeFromUrl } from '../utils/url'
+import { getPlayerStatusColor } from '../utils/playerStatus'
 import GameConfig from './GameConfig'
 import Game from './Game'
 
@@ -36,8 +37,9 @@ const Lobby: React.FC = () => {
   const createRoomMutation = trpc.room.create.useMutation()
   const joinRoomMutation = trpc.room.join.useMutation()
   const updatePlayerStatusMutation = trpc.room.updatePlayerStatus.useMutation()
-  const markPlayerOfflineMutation = trpc.room.markPlayerOffline.useMutation()
+  // const markPlayerOfflineMutation = trpc.room.markPlayerOffline.useMutation()
   const leaveRoomMutation = trpc.room.leave.useMutation()
+  const kickPlayerMutation = trpc.room.kickPlayer.useMutation()
   const { data: roomData, refetch: refetchRoom, error: roomError } = trpc.room.getRoom.useQuery(
     { roomId: currentRoom?.id || '', sessionId: getSessionId() },
     { 
@@ -60,7 +62,8 @@ const Lobby: React.FC = () => {
         setCurrentRoom(data.room)
         setPlayers(data.players.map(p => ({
           ...p,
-          lastSeen: new Date(p.lastSeen)
+          lastSeen: new Date(p.lastSeen),
+          country: p.country ?? null
         })))
         
         if (data.room.status === 'playing' && mode === 'room') {
@@ -94,7 +97,8 @@ const Lobby: React.FC = () => {
       setCurrentRoom(roomData.room)
       setPlayers(roomData.players.map(p => ({
         ...p,
-        lastSeen: new Date(p.lastSeen)
+        lastSeen: new Date(p.lastSeen),
+        country: p.country ?? null
       })))
       
       // Update URL with room code if not already there
@@ -115,7 +119,8 @@ const Lobby: React.FC = () => {
       setCurrentRoom(roomByCodeData.room)
       setPlayers(roomByCodeData.players.map((p: any) => ({
         ...p,
-        lastSeen: new Date(p.lastSeen)
+        lastSeen: new Date(p.lastSeen),
+        country: p.country ?? null
       })))
       
       // Only transition to room mode if we have a current player ID (means we joined)
@@ -261,12 +266,22 @@ const Lobby: React.FC = () => {
     }
   }
 
-  const getPlayerStatusColor = (player: Player) => {
-    const timeSinceLastSeen = Date.now() - player.lastSeen.getTime()
-    if (timeSinceLastSeen < 20000) return 'bg-green-500'
-    if (timeSinceLastSeen < 60000) return 'bg-yellow-500'
-    return 'bg-red-500'
+  const handleKickPlayer = async (playerToKickId: string, playerName: string) => {
+    if (!currentPlayerId) return
+    
+    if (confirm(`Are you sure you want to kick ${playerName} from the room?`)) {
+      try {
+        await kickPlayerMutation.mutateAsync({ 
+          playerId: playerToKickId, 
+          kickerId: currentPlayerId 
+        })
+      } catch (error) {
+        console.error('Failed to kick player:', error)
+        alert('Failed to kick player')
+      }
+    }
   }
+
 
   const getTimeSinceLastSeen = (player: Player) => {
     const timeSinceLastSeen = Date.now() - player.lastSeen.getTime()
@@ -280,7 +295,10 @@ const Lobby: React.FC = () => {
   if (mode === 'menu') {
     return (
       <div className="max-w-md mx-auto mt-16 p-6 bg-white rounded-lg shadow-lg">
-        <h1 className="text-3xl font-bold text-center mb-8">Word Game</h1>
+        <div className="text-center mb-8">
+          <h1 className="text-4xl font-bold text-blue-600 mb-2">Reyers Answer Guessing Game</h1>
+          <p className="text-gray-600">A fun multiplayer guessing game</p>
+        </div>
         
         <div className="mb-6">
           <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -320,7 +338,10 @@ const Lobby: React.FC = () => {
   if (mode === 'create') {
     return (
       <div className="max-w-md mx-auto mt-16 p-6 bg-white rounded-lg shadow-lg">
-        <h2 className="text-2xl font-bold text-center mb-6">Create Room</h2>
+        <div className="text-center mb-6">
+          <h1 className="text-2xl font-bold text-blue-600 mb-1">Reyers Answer Guessing Game</h1>
+          <h2 className="text-xl font-semibold">Create Room</h2>
+        </div>
         
         <div className="mb-6">
           <p className="text-gray-600 mb-4">
@@ -351,7 +372,10 @@ const Lobby: React.FC = () => {
   if (mode === 'join') {
     return (
       <div className="max-w-md mx-auto mt-16 p-6 bg-white rounded-lg shadow-lg">
-        <h2 className="text-2xl font-bold text-center mb-6">Join Room</h2>
+        <div className="text-center mb-6">
+          <h1 className="text-2xl font-bold text-blue-600 mb-1">Reyers Answer Guessing Game</h1>
+          <h2 className="text-xl font-semibold">Join Room</h2>
+        </div>
         
         <div className="mb-6">
           <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -392,7 +416,8 @@ const Lobby: React.FC = () => {
       <div className="max-w-4xl mx-auto mt-8 p-6">
         <div className="bg-white rounded-lg shadow-lg p-6">
           <div className="text-center mb-8">
-            <h1 className="text-3xl font-bold mb-2">Join Room {currentRoom.code}</h1>
+            <h1 className="text-2xl font-bold text-blue-600 mb-1">Reyers Answer Guessing Game</h1>
+            <h2 className="text-2xl font-bold mb-2">Join Room {currentRoom.code}</h2>
             <p className="text-gray-600">Enter your name to join this room</p>
           </div>
 
@@ -463,7 +488,8 @@ const Lobby: React.FC = () => {
         <div className="bg-white rounded-lg shadow-lg p-6">
           <div className="flex justify-between items-center mb-6">
             <div>
-              <h1 className="text-3xl font-bold">Room {currentRoom.code}</h1>
+              <h1 className="text-2xl font-bold text-blue-600">Reyers Answer Guessing Game</h1>
+              <h2 className="text-2xl font-bold">Room {currentRoom.code}</h2>
               <p className="text-gray-600">Status: {currentRoom.status}</p>
             </div>
             <button
@@ -474,22 +500,70 @@ const Lobby: React.FC = () => {
             </button>
           </div>
 
+          <div className="mb-6">
+            <div className="bg-blue-50 p-4 rounded-lg">
+              <h3 className="text-lg font-semibold mb-3">Invite Players</h3>
+              <div className="flex items-center space-x-3">
+                <div className="flex-1">
+                  <input
+                    type="text"
+                    value={`${window.location.origin}/?room=${currentRoom.code}`}
+                    readOnly
+                    className="w-full px-3 py-2 bg-white border border-gray-300 rounded-md text-sm"
+                  />
+                </div>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(`${window.location.origin}/?room=${currentRoom.code}`)
+                      .then(() => {
+                        // Could add a toast notification here
+                        alert('Invite link copied to clipboard!')
+                      })
+                      .catch(() => {
+                        alert('Failed to copy link')
+                      })
+                  }}
+                  className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 whitespace-nowrap"
+                >
+                  Copy Link
+                </button>
+              </div>
+              <p className="text-sm text-gray-600 mt-2">
+                Share this link with friends to invite them to your room
+              </p>
+            </div>
+          </div>
+
           <div className="mb-8">
             <h2 className="text-xl font-semibold mb-4">Players ({players.length})</h2>
             <div className="space-y-3">
               {players.map((player) => (
-                <div key={player.id} className="flex items-center space-x-3 p-3 bg-gray-50 rounded-md">
-                  <div className={`w-3 h-3 rounded-full ${getPlayerStatusColor(player)}`}></div>
-                  <div className="flex-1">
-                    <div className="flex items-center space-x-2">
-                      <span className="font-medium">{player.name}</span>
-                      {player.isCreator && <span className="text-yellow-500">👑</span>}
-                      {player.country && <span>{player.country}</span>}
+                <div key={player.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-md">
+                  <div className="flex items-center space-x-3">
+                    <div className={`w-3 h-3 rounded-full ${getPlayerStatusColor(player)}`}></div>
+                    <div className="flex-1">
+                      <div className="flex items-center space-x-2">
+                        <span className="font-medium">{player.name}</span>
+                        {player.isCreator && <span className="text-yellow-500">👑</span>}
+                        {player.country && <span>{player.country}</span>}
+                      </div>
+                      {getTimeSinceLastSeen(player) && (
+                        <span className="text-sm text-gray-500">{getTimeSinceLastSeen(player)}</span>
+                      )}
                     </div>
-                    {getTimeSinceLastSeen(player) && (
-                      <span className="text-sm text-gray-500">{getTimeSinceLastSeen(player)}</span>
-                    )}
                   </div>
+                  
+                  {/* Kick button - only show for room creator and only for other players */}
+                  {currentRoom && currentPlayerId === currentRoom.creatorId && 
+                   player.id !== currentPlayerId && (
+                    <button
+                      onClick={() => handleKickPlayer(player.id, player.name)}
+                      disabled={kickPlayerMutation.isPending}
+                      className="px-3 py-1 bg-red-500 text-white text-sm rounded hover:bg-red-600 disabled:bg-gray-300"
+                    >
+                      {kickPlayerMutation.isPending ? 'Kicking...' : 'Kick'}
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
@@ -498,7 +572,7 @@ const Lobby: React.FC = () => {
           {currentRoom.status === 'lobby' && (
             <GameConfig
               roomId={currentRoom.id}
-              playerId={currentPlayerId}
+              playerId={currentPlayerId!}
               currentConfig={{
                 totalRounds: currentRoom.totalRounds,
                 roundTimeLimit: currentRoom.roundTimeLimit,
@@ -521,6 +595,7 @@ const Lobby: React.FC = () => {
         roomId={currentRoom.id}
         playerId={currentPlayerId}
         onBackToLobby={() => setMode('room')}
+        onExitRoom={handleLeaveRoom}
       />
     )
   }

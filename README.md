@@ -47,6 +47,8 @@ The answers are revealed immediately. The rating is shown as a spinner, until th
 
 At the top, the current player list is always shown - each like in the lobby (crown, online status) plus their score, with a number before it to show the position (dupe positions are shown as 1st place, 1st place, 3rd place (example)). Also next to the name, what the player is currently doing is written (thinking, writing their answer, guessing xx (player name)s answer).
 
+the ranking is based on points. a player gets one point per rating in each round. e.g. if the answer was rated 5 they get five points. points are also displayed in the player list.
+
 at the bottom, there is a next button. you press this button to confirm you are ready for the next round. below there is text  who hasn't pressed it yet. (waiting for xx,yy if there is two or less players remaining, or waiting for 3 players if more)
 
 ## Finish

@@ -38,20 +38,20 @@ const GameConfig: React.FC<GameConfigProps> = ({
     setInitialPrompt(currentConfig.initialPrompt)
   }, [currentConfig.totalRounds, currentConfig.roundTimeLimit, currentConfig.initialPrompt])
 
-  const handleUpdateConfig = async () => {
-    try {
-      await updateConfigMutation.mutateAsync({
-        roomId,
-        playerId,
-        totalRounds,
-        roundTimeLimit,
-        initialPrompt: initialPrompt.trim(),
-      })
-      onConfigUpdate()
-    } catch (error) {
-      console.error('Failed to update config:', error)
-    }
-  }
+  // const handleUpdateConfig = async () => {
+  //   try {
+  //     await updateConfigMutation.mutateAsync({
+  //       roomId,
+  //       playerId,
+  //       totalRounds,
+  //       roundTimeLimit,
+  //       initialPrompt: initialPrompt.trim(),
+  //     })
+  //     onConfigUpdate()
+  //   } catch (error) {
+  //     console.error('Failed to update config:', error)
+  //   }
+  // }
 
   const handleStartGame = async () => {
     try {

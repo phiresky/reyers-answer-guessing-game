@@ -15,6 +15,13 @@
       "when": 1750969475561,
       "tag": "0001_eager_rafael_vega",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1751032913785,
+      "tag": "0002_puzzling_ink",
+      "breakpoints": true
     }
   ]
 }

@@ -6,7 +6,7 @@ import type { Context } from './trpc'
 
 const server = fastify({
   maxParamLength: 5000,
-  logger: true
+  logger: {level: "info", transport: { target: 'pino-pretty' }},
 })
 
 server.register(cors, {

@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core'
+import { sqliteTable, text, integer, real, unique } from 'drizzle-orm/sqlite-core'
 import { createId } from '@paralleldrive/cuid2'
 
 export const rooms = sqliteTable('rooms', {
@@ -36,7 +36,9 @@ export const games = sqliteTable('games', {
   startedAt: integer('started_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
   endedAt: integer('ended_at', { mode: 'timestamp' }),
   status: text('status', { enum: ['active', 'answering', 'guessing', 'rating', 'completed'] }).notNull().default('active'),
-})
+}, (table) => ({
+  uniqueRoomRound: unique().on(table.roomId, table.round),
+}))
 
 export const answers = sqliteTable('answers', {
   id: text('id').primaryKey().$defaultFn(() => createId()),

@@ -49,12 +49,18 @@ export async function rateGuess(
   guess: string,
   question: string
 ): Promise<number> {
-  const result = await generateText({
-    model: ai(model),
-    messages: [
-      {
-        role: "system",
-        content: `You are an AI judge for a social guessing game. Players answer questions, then try to guess what other players answered.
+  try {
+    // Add timeout to prevent hanging
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('AI rating timeout')), 30000) // 30 second timeout
+    })
+
+    const ratingPromise = generateText({
+      model: ai(model),
+      messages: [
+        {
+          role: "system",
+          content: `You are an AI judge for a social guessing game. Players answer questions, then try to guess what other players answered.
 
 Your job is to rate how well a guess matches the original answer on a scale of 1-10:
 
@@ -72,20 +78,26 @@ Consider:
 - Reward creative interpretations that capture the spirit
 
 Respond with ONLY a number from 1-10, nothing else.`,
-      },
-      {
-        role: "user",
-        content: `Question: "${question}"
+        },
+        {
+          role: "user",
+          content: `Question: "${question}"
 
 Original Answer: "${originalAnswer}"
 Guess: "${guess}"
 
 Rate this guess (1-10):`,
-      },
-    ],
-    temperature: 0.3,
-  });
+        },
+      ],
+      temperature: 0.3,
+    })
 
-  const rating = parseFloat(result.text.trim());
-  return isNaN(rating) ? 5 : Math.min(10, Math.max(1, rating));
+    const result = await Promise.race([ratingPromise, timeoutPromise])
+    const rating = parseFloat(result.text.trim())
+    return isNaN(rating) ? 5 : Math.min(10, Math.max(1, rating))
+  } catch (error) {
+    console.error('Failed to rate guess:', error)
+    // Return default rating if AI fails or times out
+    return 5
+  }
 }

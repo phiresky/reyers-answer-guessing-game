@@ -1,51 +1,36 @@
 import React, { useState, useEffect } from 'react'
 import { trpc } from '../trpc'
 import { getSessionId } from '../utils/storage'
+import { getPlayerStatusColor } from '../utils/playerStatus'
+import type { Game, Answer, Guess, Player, GameResult, GuessTarget } from '../../../shared/types'
 
 interface GameProps {
   roomId: string
   playerId: string
   onBackToLobby: () => void
+  onExitRoom: () => void
 }
 
-interface Game {
-  id: string
-  question: string
-  status: 'active' | 'answering' | 'guessing' | 'rating' | 'completed'
-  round: number
-}
 
-interface Answer {
-  id: string
-  playerId: string
-  answer: string
-  isSubmitted: boolean
-}
-
-interface Player {
-  id: string
-  name: string
-}
-
-const Game: React.FC<GameProps> = ({ roomId, playerId, onBackToLobby }) => {
+const Game: React.FC<GameProps> = ({ roomId, playerId, onBackToLobby, onExitRoom }) => {
   const [currentAnswer, setCurrentAnswer] = useState('')
   const [currentGuess, setCurrentGuess] = useState('')
   const [currentGame, setCurrentGame] = useState<Game | null>(null)
   const [isAnswerSubmitted, setIsAnswerSubmitted] = useState(false)
   const [isGuessSubmitted, setIsGuessSubmitted] = useState(false)
-  const [guessTargetPlayer, setGuessTargetPlayer] = useState<Player | null>(null)
+  const [guessTargetPlayer, setGuessTargetPlayer] = useState<GuessTarget | null>(null)
   const [isReadyForNextRound, setIsReadyForNextRound] = useState(false)
-  const [gameGuesses, setGameGuesses] = useState<any[]>([])
+  const [gameGuesses, setGameGuesses] = useState<Guess[]>([])
+  const [showFinalResults, setShowFinalResults] = useState(false)
+  const [roomPlayers, setRoomPlayers] = useState<Player[]>([])
+  const [gameAnswers, setGameAnswers] = useState<Answer[]>([])
 
-  const { data: gameData, refetch: refetchCurrentGame } = trpc.game.getCurrentGame.useQuery(
+  const [hasInitiallyFetched, setHasInitiallyFetched] = useState(false)
+  const { data: initialGameData, refetch: fetchCurrentGame } = trpc.game.getCurrentGame.useQuery(
     { roomId },
-    { enabled: !!roomId }
+    { enabled: false } // We'll manually trigger this
   )
 
-  const { data: gameAnswers } = trpc.game.getGameAnswers.useQuery(
-    { gameId: currentGame?.id || '' },
-    { enabled: !!currentGame && currentGame.status === 'answering' }
-  )
 
 
 
@@ -68,6 +53,11 @@ const Game: React.FC<GameProps> = ({ roomId, playerId, onBackToLobby }) => {
   const checkProgressMutation = trpc.game.checkGameProgress.useMutation()
   const readyForNextRoundMutation = trpc.game.readyForNextRound.useMutation()
 
+  const { data: guessTargetData } = trpc.game.getGuessTarget.useQuery(
+    { gameId: currentGame?.id || '', playerId },
+    { enabled: !!currentGame && isAnswerSubmitted && !guessTargetPlayer }
+  )
+
   const { data: roundReadyStatus } = trpc.game.getRoundReadyStatus.useQuery(
     { roomId },
     { 
@@ -81,12 +71,17 @@ const Game: React.FC<GameProps> = ({ roomId, playerId, onBackToLobby }) => {
     {
       enabled: !!roomId,
       onData: (data) => {
-        console.log('Game update received:', data.game, 'Guesses:', data.guesses)
+        console.log('Game update received:', data.game, 'Guesses:', data.guesses, 'Answers:', data.answers)
         setCurrentGame(data.game)
         
         // Update guess data if available
         if (data.guesses) {
           setGameGuesses(data.guesses)
+        }
+        
+        // Update answer data if available
+        if (data.answers) {
+          setGameAnswers(data.answers)
         }
         
         // If game status changed to rating or completed, refetch results immediately
@@ -105,9 +100,16 @@ const Game: React.FC<GameProps> = ({ roomId, playerId, onBackToLobby }) => {
     {
       enabled: !!roomId,
       onData: (data) => {
-        // When room updates (like currentRound increment), refetch current game
-        console.log('Room update received, refetching game')
-        refetchCurrentGame()
+        // When room updates (like currentRound increment), fetch new game
+        console.log('Room update received, current round:', data.room.currentRound)
+        
+        // Update room players with latest data (including scores)
+        setRoomPlayers(data.players)
+        
+        if (data.room.currentRound > (currentGame?.round || 0)) {
+          console.log('New round detected, fetching new game')
+          fetchCurrentGame()
+        }
       },
       onError: (error) => {
         console.error('Room subscription error:', error)
@@ -115,12 +117,26 @@ const Game: React.FC<GameProps> = ({ roomId, playerId, onBackToLobby }) => {
     }
   )
 
+  // Fetch initial game data when component mounts
   useEffect(() => {
-    if (gameData) {
-      // Only update if it's actually a different game (new game ID or first load)
-      if (!currentGame || currentGame.id !== gameData.id) {
-        console.log('Setting game from gameData:', gameData)
-        setCurrentGame(gameData)
+    if (roomId && !hasInitiallyFetched) {
+      fetchCurrentGame()
+      setHasInitiallyFetched(true)
+    }
+  }, [roomId, hasInitiallyFetched, fetchCurrentGame])
+
+  // Handle initial game data response
+  useEffect(() => {
+    if (initialGameData) {
+      const game = initialGameData.game
+      const guesses = initialGameData.guesses || []
+      const answers = initialGameData.answers || []
+      
+      if (game && (!currentGame || currentGame.id !== game.id)) {
+        console.log('Setting initial game:', game, 'Guesses:', guesses, 'Answers:', answers)
+        setCurrentGame(game)
+        setGameGuesses(guesses)
+        setGameAnswers(answers)
         // Reset all game state when new game starts
         setIsReadyForNextRound(false)
         setCurrentAnswer('')
@@ -130,7 +146,7 @@ const Game: React.FC<GameProps> = ({ roomId, playerId, onBackToLobby }) => {
         setGuessTargetPlayer(null)
       }
     }
-  }, [gameData, currentGame])
+  }, [initialGameData, currentGame])
 
   useEffect(() => {
     if (gameAnswers) {
@@ -143,24 +159,19 @@ const Game: React.FC<GameProps> = ({ roomId, playerId, onBackToLobby }) => {
     }
   }, [gameAnswers, playerId])
 
-  // Assign a random guess target when player submits their answer
+  // Set guess target from API response
   useEffect(() => {
-    if (isAnswerSubmitted && roomData && !guessTargetPlayer) {
-      // Get other players (not self)
-      const otherPlayers = roomData.players.filter(p => p.id !== playerId)
-      
-      if (otherPlayers.length > 0) {
-        // Pick a random player to guess for
-        const randomIndex = Math.floor(Math.random() * otherPlayers.length)
-        const targetPlayer = otherPlayers[randomIndex]
-        
-        setGuessTargetPlayer({ 
-          id: targetPlayer.id, 
-          name: targetPlayer.name 
-        })
-      }
+    if (guessTargetData && !guessTargetPlayer) {
+      setGuessTargetPlayer(guessTargetData)
     }
-  }, [isAnswerSubmitted, roomData, guessTargetPlayer, playerId])
+  }, [guessTargetData, guessTargetPlayer])
+
+  // Initialize room players from roomData
+  useEffect(() => {
+    if (roomData?.players && roomPlayers.length === 0) {
+      setRoomPlayers(roomData.players)
+    }
+  }, [roomData?.players, roomPlayers.length])
 
   const handleSaveAnswer = async (submit = false) => {
     if (!currentGame || !currentAnswer.trim()) return
@@ -240,69 +251,58 @@ const Game: React.FC<GameProps> = ({ roomId, playerId, onBackToLobby }) => {
     }
   }
 
-  const getPlayerStatusColor = (player: any) => {
-    const timeSinceLastSeen = Date.now() - new Date(player.lastSeen).getTime()
-    if (timeSinceLastSeen < 20000) return 'bg-green-500'
-    if (timeSinceLastSeen < 60000) return 'bg-yellow-500'
-    return 'bg-red-500'
-  }
 
-  const getPlayerActivity = (player: any) => {
+  const getPlayerActivity = (player: Player): string => {
     if (!gameAnswers || !currentGame || currentGame.status !== 'answering') return 'waiting'
     
     const playerAnswer = gameAnswers.find((answer: Answer) => answer.playerId === player.id)
-    
+    console.log("player activity", player, gameAnswers);
     // Phase 1: Thinking (no answer started)
     if (!playerAnswer) return 'thinking'
     
     // Phase 2: Writing answer (answer exists but not submitted)
     if (!playerAnswer.isSubmitted) return 'writing their answer'
     
-    // Phase 3: Check if they should be guessing
-    // Player has submitted answer, now check if there are other submitted answers to guess
-    const otherSubmittedAnswers = gameAnswers.filter((answer: Answer) => 
-      answer.playerId !== player.id && answer.isSubmitted
-    )
-    
-    if (otherSubmittedAnswers.length === 0) {
-      // No other answers to guess yet
-      return 'waiting for others'
-    }
-    
-    // Phase 4: Use real guess data to determine status
-    // Check if this player has submitted a guess for the current game
-    const playerGuess = gameGuesses.find((guess: any) => guess.guesserId === player.id)
+    // Phase 3: Player has submitted their answer, now check guess status
+    const playerGuess = gameGuesses.find((guess: Guess) => guess.guesserId === player.id)
     
     if (!playerGuess) {
-      // Player hasn't started guessing yet - find who they should guess for
+      // Player hasn't started guessing yet - they should be guessing someone
       if (player.id === playerId && guessTargetPlayer) {
         return `guessing ${guessTargetPlayer.name}'s answer`
       }
       
-      // For other players, find a target they might be guessing for
-      const targetPlayer = roomData?.players.find(p => 
-        p.id !== player.id && 
-        gameAnswers.some(a => a.playerId === p.id && a.isSubmitted)
-      )
-      
-      if (targetPlayer) {
-        return `guessing ${targetPlayer.name}'s answer`
+      // For other players, calculate their deterministic assignment
+      if (roomPlayers.length > 0 && currentGame) {
+        const sortedPlayers = [...roomPlayers].sort((a, b) => a.id.localeCompare(b.id))
+        const currentPlayerIndex = sortedPlayers.findIndex(p => p.id === player.id)
+        
+        if (currentPlayerIndex !== -1) {
+          const offset = currentGame.round % sortedPlayers.length
+          const targetIndex = (currentPlayerIndex + offset) % sortedPlayers.length
+          const finalTargetIndex = targetIndex === currentPlayerIndex 
+            ? (currentPlayerIndex + 1) % sortedPlayers.length 
+            : targetIndex
+          
+          const targetPlayer = sortedPlayers[finalTargetIndex]
+          return `guessing ${targetPlayer.name}'s answer`
+        }
       }
       
-      return 'waiting for others'
+      return 'guessing...'
     }
     
     if (!playerGuess.isSubmitted) {
       // Player is currently writing their guess
-      const targetPlayer = roomData?.players.find(p => p.id === playerGuess.targetPlayerId)
+      const targetPlayer = roomPlayers.find(p => p.id === playerGuess.targetPlayerId)
       return `guessing ${targetPlayer?.name || 'another player'}'s answer`
     }
     
-    // Player has submitted their guess
+    // Player has submitted their guess - NOW they wait
     return 'waiting for others'
   }
 
-  const getPlayerPosition = (player: any, sortedPlayers: any[]) => {
+  const getPlayerPosition = (player: Player, sortedPlayers: Player[]): string => {
     const position = sortedPlayers.findIndex(p => p.id === player.id) + 1
     if (position === 1) return '1st'
     if (position === 2) return '2nd' 
@@ -327,23 +327,34 @@ const Game: React.FC<GameProps> = ({ roomId, playerId, onBackToLobby }) => {
     <div className="max-w-4xl mx-auto mt-8 p-6">
       <div className="bg-white rounded-lg shadow-lg p-6">
         <div className="flex justify-between items-center mb-6">
-          <h1 className="text-3xl font-bold">Round {currentGame.round}</h1>
+          <div>
+            <h1 className="text-2xl font-bold text-blue-600">Reyers Answer Guessing Game</h1>
+            <h2 className="text-2xl font-bold">
+              Round {currentGame.round}{roomData?.room?.totalRounds ? `/${roomData.room.totalRounds}` : ''}
+            </h2>
+          </div>
+          <button
+            onClick={onExitRoom}
+            className="px-4 py-2 bg-red-500 text-white rounded-md hover:bg-red-600"
+          >
+            Exit Room
+          </button>
         </div>
 
         {/* Player List */}
-        {roomData && roomData.players && (
+        {roomPlayers.length > 0 && (
           <div className="mb-6">
             <h3 className="text-lg font-semibold mb-3">Players</h3>
             <div className="bg-gray-50 rounded-lg p-4">
               <div className="space-y-2">
-                {roomData.players
+                {roomPlayers
                   .sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0))
                   .map((player) => (
                     <div key={player.id} className="flex items-center justify-between p-2 bg-white rounded border">
                       <div className="flex items-center space-x-3">
                         <div className="flex items-center space-x-2">
                           <span className="font-medium text-sm text-gray-600">
-                            {getPlayerPosition(player, roomData.players.sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0)))}
+                            {getPlayerPosition(player, roomPlayers.sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0)))}
                           </span>
                           <div className={`w-3 h-3 rounded-full ${getPlayerStatusColor(player)}`}></div>
                         </div>
@@ -353,7 +364,7 @@ const Game: React.FC<GameProps> = ({ roomId, playerId, onBackToLobby }) => {
                           {player.country && <span>{player.country}</span>}
                         </div>
                         <span className="text-sm font-medium text-blue-600">
-                          {player.totalScore || 0} pts
+                          {Math.round((player.totalScore || 0) * 10) / 10} pts
                         </span>
                       </div>
                       <div className="text-sm text-gray-500 italic">
@@ -487,7 +498,7 @@ const Game: React.FC<GameProps> = ({ roomId, playerId, onBackToLobby }) => {
             ) : (
             
             <div className="space-y-6">
-              {gameResults.results.map((result: any, index: number) => (
+              {gameResults.results.map((result: GameResult, index: number) => (
                 <div key={index} className="bg-white p-4 rounded-lg border">
                   <div className="mb-3">
                     <h4 className="font-semibold text-lg">
@@ -510,14 +521,14 @@ const Game: React.FC<GameProps> = ({ roomId, playerId, onBackToLobby }) => {
                       <span className="font-medium">Rating:</span>
                       <div className="flex items-center space-x-1">
                         <span className="text-2xl font-bold text-blue-600">
-                          {result.rating}/10
+                          {result.rating || 0}/10
                         </span>
                         <div className="flex">
                           {[...Array(10)].map((_, i) => (
                             <div
                               key={i}
                               className={`w-3 h-3 rounded-full mx-0.5 ${
-                                i < result.rating ? 'bg-blue-500' : 'bg-gray-200'
+                                i < (result.rating || 0) ? 'bg-blue-500' : 'bg-gray-200'
                               }`}
                             />
                           ))}
@@ -550,7 +561,7 @@ const Game: React.FC<GameProps> = ({ roomId, playerId, onBackToLobby }) => {
             ) : (
             
             <div className="space-y-6">
-              {gameResults.results.map((result: any, index: number) => (
+              {gameResults.results.map((result: GameResult, index: number) => (
                 <div key={index} className="bg-white p-4 rounded-lg border">
                   <div className="mb-3">
                     <h4 className="font-semibold text-lg">
@@ -573,14 +584,14 @@ const Game: React.FC<GameProps> = ({ roomId, playerId, onBackToLobby }) => {
                       <span className="font-medium">Rating:</span>
                       <div className="flex items-center space-x-1">
                         <span className="text-2xl font-bold text-blue-600">
-                          {result.rating}/10
+                          {result.rating || 0}/10
                         </span>
                         <div className="flex">
                           {[...Array(10)].map((_, i) => (
                             <div
                               key={i}
                               className={`w-3 h-3 rounded-full mx-0.5 ${
-                                i < result.rating ? 'bg-blue-500' : 'bg-gray-200'
+                                i < (result.rating || 0) ? 'bg-blue-500' : 'bg-gray-200'
                               }`}
                             />
                           ))}
@@ -601,13 +612,22 @@ const Game: React.FC<GameProps> = ({ roomId, playerId, onBackToLobby }) => {
             
             <div className="mt-8 text-center">
               {roomData && currentGame.round >= roomData.room.totalRounds ? (
-                // Final round completed - show Back to Lobby
-                <button
-                  onClick={onBackToLobby}
-                  className="px-6 py-3 bg-blue-500 text-white rounded-md hover:bg-blue-600"
-                >
-                  Back to Lobby
-                </button>
+                // Final round completed - show results or back to lobby
+                showFinalResults ? (
+                  <button
+                    onClick={onBackToLobby}
+                    className="px-6 py-3 bg-blue-500 text-white rounded-md hover:bg-blue-600"
+                  >
+                    Back to Lobby
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setShowFinalResults(true)}
+                    className="px-6 py-3 bg-green-500 text-white rounded-md hover:bg-green-600"
+                  >
+                    Show Results!
+                  </button>
+                )
               ) : (
                 // Not final round - show Next button
                 <div className="space-y-4">
@@ -639,6 +659,55 @@ const Game: React.FC<GameProps> = ({ roomId, playerId, onBackToLobby }) => {
                   )}
                 </div>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* Final Results Screen */}
+        {showFinalResults && roomData && roomPlayers.length > 0 && (
+          <div className="bg-gradient-to-br from-yellow-50 to-orange-50 p-8 rounded-lg border-2 border-yellow-300 mt-6">
+            <div className="text-center mb-8">
+              <h2 className="text-4xl font-bold text-yellow-800 mb-2">🎉 Final Results! 🎉</h2>
+              <p className="text-lg text-yellow-700">Game completed after {roomData.room.totalRounds} rounds</p>
+            </div>
+            
+            <div className="space-y-4">
+              {roomPlayers
+                .sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0))
+                .map((player, index) => (
+                  <div 
+                    key={player.id} 
+                    className={`flex items-center justify-between p-4 rounded-lg border-2 ${
+                      index === 0 
+                        ? 'bg-yellow-100 border-yellow-400' 
+                        : index === 1 
+                        ? 'bg-gray-100 border-gray-400'
+                        : index === 2
+                        ? 'bg-orange-100 border-orange-400'
+                        : 'bg-white border-gray-300'
+                    }`}
+                  >
+                    <div className="flex items-center space-x-4">
+                      <div className="text-2xl font-bold">
+                        {index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `#${index + 1}`}
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <span className="text-xl font-semibold">{player.name}</span>
+                        {player.isCreator && <span className="text-yellow-500">👑</span>}
+                        {player.country && <span>{player.country}</span>}
+                      </div>
+                    </div>
+                    <div className="text-2xl font-bold text-blue-600">
+                      {Math.round((player.totalScore || 0) * 10) / 10} pts
+                    </div>
+                  </div>
+                ))}
+            </div>
+            
+            <div className="mt-8 text-center">
+              <p className="text-gray-600 mb-4">
+                Thanks for playing! 🎮
+              </p>
             </div>
           </div>
         )}
