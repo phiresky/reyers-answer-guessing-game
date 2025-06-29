@@ -73,14 +73,14 @@ async function startAIRating(gameId: string) {
     const finalGuesses = await db.select().from(guesses).where(eq(guesses.gameId, gameId))
     for (const guess of finalGuesses) {
       if (guess.rating) {
-        // Award points to the player who was guessed (their answer was rated)
+        // Award points to the player who made the guess
         await db.update(players)
           .set({ 
             totalScore: sql`${players.totalScore} + ${guess.rating}`
           })
-          .where(eq(players.id, guess.targetPlayerId))
+          .where(eq(players.id, guess.guesserId))
         
-        console.log(`Awarded ${guess.rating} points to player ${guess.targetPlayerId}`)
+        console.log(`Awarded ${guess.rating} points to player ${guess.guesserId}`)
       }
     }
     
