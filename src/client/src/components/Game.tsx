@@ -153,11 +153,15 @@ const Game: React.FC<GameProps> = ({ roomId, playerId, onBackToLobby, onExitRoom
       // Check if current player has submitted answer
       const myAnswer = gameAnswers.find((answer: Answer) => answer.playerId === playerId)
       if (myAnswer) {
-        setCurrentAnswer(myAnswer.answer)
+        // Only update answer if it's submitted (to avoid overwriting user's typing)
+        // or if we don't have any current answer yet
+        if (myAnswer.isSubmitted || !currentAnswer) {
+          setCurrentAnswer(myAnswer.answer)
+        }
         setIsAnswerSubmitted(myAnswer.isSubmitted)
       }
     }
-  }, [gameAnswers, playerId])
+  }, [gameAnswers, playerId, currentAnswer])
 
   // Set guess target from API response
   useEffect(() => {
